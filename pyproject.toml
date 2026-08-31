@@ -1,0 +1,23 @@
+[project]
+name = "auto-coding-machine"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "filelock>=3.32.4",
+    "prompt-toolkit>=3.0.53",
+    "python-dotenv>=1.2.3",
+    "pyyaml>=6.0.3",
+    "rank-bm25>=0.2.2",
+    "requests>=2.34.2",
+    "rich>=15.0.0",
+    "tiktoken>=0.14.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

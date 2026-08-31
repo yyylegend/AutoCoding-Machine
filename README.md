@@ -1,4 +1,4 @@
-# Coding Agent Runtime
+# AutoCoding Machine
 
 一个面向代码库任务的轻量 Agent：模型通过工具读取、搜索、编辑并验证代码，CLI 负责交互，Runtime 负责组装循环、权限、上下文、记忆与工具。
 
@@ -17,18 +17,19 @@
 ## 快速开始
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+uv sync
 Copy-Item .env.example .env
-.venv\Scripts\python.exe -m src.profiles.coding.cli
+uv run python -m src.profiles.coding.cli
 ```
 
 在 `.env` 中填写 OpenAI-compatible 模型的 `LLM_BASE_URL`、`LLM_MODEL` 和 `LLM_API_KEY`。
 
+项目使用 `pyproject.toml` 声明依赖，使用 `uv.lock` 锁定可复现的依赖版本；新增或删除依赖时使用 `uv add` 或 `uv remove`。
+
 ## 测试
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests -q
+uv run pytest
 ```
 
 ## 架构

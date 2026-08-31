@@ -33,7 +33,7 @@ def create_coding_runtime(
     auto_approve=False,
     loop_class=None,
 ):
-    """创建 Coding Agent Runtime。
+    """创建 AutoCoding Machine Runtime。
 
     参数允许调用方替换内部 adapter：
     - hooks 可以提前注册生命周期回调。
