@@ -34,7 +34,7 @@ from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.text import Text
 
-from src.common.llm_client import chat, chat_stream
+from src.common.llm_client import ContextLengthExceededError, chat, chat_stream
 from src.config.settings import settings
 from src.engine.contracts import AgentResponse, ToolCall
 
@@ -208,6 +208,10 @@ class StreamingAdapter(BaseCodingAdapter):
             try:
                 result = self._call_streaming(messages, buffer)
                 self.last_streamed = bool(buffer)
+            except ContextLengthExceededError:
+                # 上下文超限必须交给 MachineLoop 先压缩再重试。
+                # 不能按普通流式故障直接拿同一批消息做非流式重发。
+                raise
             except Exception as exc:
                 # 4xx 客户端错误（内容被拒等）：重发必然再错，直接抛出
                 import requests as _requests

@@ -61,11 +61,20 @@
 from __future__ import annotations
 
 import hashlib
+import re
+import time
 
 from src.common.logger import get_logger
 from src.common.token_utils import count_tokens_old_style as count_tokens
 
 logger = get_logger(__name__)
+
+# 摘要失败后的冷却时长（秒）：同一批旧消息失败后 10 分钟内不再重试，
+# 直接复用确定性摘录，避免每轮压缩都白调一次注定失败的 LLM。
+SUMMARY_FAILURE_COOLDOWN_SEC = 600
+
+# 确定性摘录的总字符上限
+EXCERPT_MAX_CHARS = 4000
 
 
 # ============================================================
@@ -151,7 +160,8 @@ class ContextManager:
                           传 None（默认）时只做纯截断，行为和旧版完全一致。
                           传一个函数时：输入是被切掉的旧消息列表，
                           返回一段摘要字符串。
-                          摘要失败或返回空时静默降级为纯截断。
+                          摘要失败或返回空时降级为确定性历史摘录，
+                          并为同一批旧消息进入 10 分钟失败冷却。
 
         大白话：
           超过 max_messages 或 max_tokens 就开始截断。
@@ -169,6 +179,17 @@ class ContextManager:
         # 没缓存的话每轮都多花一次摘要 LLM 调用，而且每次总结还不一样。
         # 只存在内存：不落盘，不违反"session 只存原始历史"的约定。
         self._summary_cache: dict[str, str] = {}
+
+        # 摘要失败冷却表：旧消息指纹 → 失败时间戳。
+        # 摘要失败也必须记下来，否则每轮压缩都会重试一次注定失败的调用。
+        self._failure_cache: dict[str, float] = {}
+
+        # 只读诊断状态：描述最近一次 maybe_compact 调用的行为。
+        # mode 取值："none"（没压缩）/ "truncated"（纯截断）/
+        #            "summary"（LLM 摘要成功）/ "excerpt"（降级为确定性摘录）
+        self.last_compaction_mode = "none"
+        self.last_compaction_error = None   # 摘要失败时的错误描述
+        self.last_dropped_count = 0         # 本次压缩丢掉的消息数
 
     def maybe_compact(self, messages: list, force: bool = False) -> list:
         """如果消息太多，就安全截断（四步流程）。
@@ -191,14 +212,21 @@ class ContextManager:
           1. 没超限 -> 原样返回
           2. 超限了 -> 保留 system 前缀 + 最近几组完整消息
           3. 切分点必须在“安全边界”上（不切断 tool 配对）
-          4. 摘要是可选的：summarizer_fn 不存在、旧消息<4、
-             摘要异常、摘要为空 → 都降级为纯截断
+          4. 摘要是可选的：summarizer_fn 不存在、旧消息<4 → 纯截断；
+             摘要异常或为空 → 降级为确定性摘录（任务不中断），
+             且同一批旧消息进入 10 分钟失败冷却，冷却期内不再调 LLM；
+             force=True（手动 /compact）绕过冷却立即重试。
 
         什么是“安全边界”：
           一条消息如果是 role="tool"，它必须和前面的 assistant(tool_calls) 在一起。
           所以切分点不能落在 tool 消息上，也不能落在带 tool_calls 的 assistant 上。
           安全的切分点：user 消息、不带 tool_calls 的 assistant 消息。
         """
+        # ---- 诊断状态复位：每次调用重新描述"这一次"的行为 ----
+        self.last_compaction_mode = "none"
+        self.last_compaction_error = None
+        self.last_dropped_count = 0
+
         # ---- Gate：两个维度任一超限才压缩（force=True 时跳过）----
         # 维度 1：消息条数超过 max_messages（传 None 则关闭这个维度）
         # 维度 2：token 总量超过 max_tokens（把上下文当稀缺资源管）
@@ -259,18 +287,43 @@ class ContextManager:
         old_messages = rest[:safe_cut]
         recent = rest[safe_cut:]
 
-        # ---- 第 4 步：摘要（可选，带进程内缓存）----
-        # 如果传了 summarizer_fn 且旧消息 >= 4 条，
-        # 先查缓存：同样的旧消息只总结一次，后续轮次直接复用。
-        # 任何异常或空结果都静默降级为纯截断（不插入摘要消息）。
+        # ---- 第 4 步：摘要（可选，带缓存与失败冷却）----
+        # 如果传了 summarizer_fn 且旧消息 >= 4 条，尝试 LLM 摘要。
+        # 三层兜底：LLM 摘要 → 冷却期内复用摘录 → 摘要失败降级为摘录。
+        # 摘录是确定性生成的（直接从旧消息里挑重点），不依赖 LLM，
+        # 保证摘要功能坏了任务也不会中断。
         summary_msg = None
         if self.summarizer_fn is not None and len(old_messages) >= 4:
-            summary_text = self._summarize_with_cache(old_messages)
+            fingerprint = self._fingerprint(old_messages)
+            summary_text = ""
+
+            if not force and self._in_failure_cooldown(fingerprint):
+                # 冷却期内：不重复请求模型，直接复用确定性摘录。
+                # force=True（手动 /compact）会绕过冷却，允许立即重试。
+                summary_text = self._build_excerpt(old_messages)
+                self.last_compaction_mode = "excerpt"
+            else:
+                summary_text, summary_error = self._summarize_with_cache(old_messages)
+                if summary_text:
+                    self.last_compaction_mode = "summary"
+                else:
+                    # 摘要失败：记入冷却表，降级为确定性摘录，任务继续
+                    self._failure_cache[fingerprint] = time.time()
+                    self.last_compaction_mode = "excerpt"
+                    self.last_compaction_error = summary_error
+                    summary_text = self._build_excerpt(old_messages)
+                    logger.info("摘要失败，已降级为确定性摘录: %s", summary_error)
+
             if summary_text:
                 summary_msg = {
                     "role": "user",
                     "content": "[历史摘要] " + summary_text,
                 }
+        else:
+            # 没传 summarizer 或旧消息太少：纯截断
+            self.last_compaction_mode = "truncated"
+
+        self.last_dropped_count = len(old_messages)
 
         # ---- 第 5 步：重新组装 ----
         # 顺序：system 前缀 + 摘要消息（如有）+ 保留的近期消息
@@ -278,34 +331,54 @@ class ContextManager:
             return system_prefix + [summary_msg] + recent
         return system_prefix + recent
 
-    def _summarize_with_cache(self, old_messages: list) -> str:
+    def _fingerprint(self, old_messages: list) -> str:
+        """给旧消息算指纹（内容 md5），用作缓存和冷却的 key。
+
+        指纹只看 role + content + tool_calls：这三样不变，
+        就认为是同一批旧消息，摘要/失败状态可以直接复用。
+        """
+        raw = ""
+        for m in old_messages:
+            raw += str(m.get("role", "")) + str(m.get("content", "")) + str(m.get("tool_calls", ""))
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+    def _in_failure_cooldown(self, fingerprint: str) -> bool:
+        """查询某批旧消息的摘要是否还在失败冷却期内。
+
+        冷却期内返回 True（调用方直接用摘录，不再调 LLM）。
+        冷却过期后顺手清理记录，下次失败会重新计时。
+        """
+        failed_at = self._failure_cache.get(fingerprint)
+        if failed_at is None:
+            return False
+        if time.time() - failed_at > SUMMARY_FAILURE_COOLDOWN_SEC:
+            del self._failure_cache[fingerprint]  # 冷却过了，清掉重来
+            return False
+        return True
+
+    def _summarize_with_cache(self, old_messages: list) -> tuple:
         """带缓存地调用摘要函数。
 
         干什么：
-          1. 给旧消息算个指纹（内容 hash）
+          1. 给旧消息算指纹（内容 hash）
           2. 缓存里有 → 直接返回，不再调 LLM
           3. 没有 → 调摘要函数，结果存进缓存
 
         返回：
-          摘要字符串；失败或为空时返回 ""（调用方降级为纯截断）
+          (摘要字符串, 错误描述)。
+          成功：("摘要文本", None)
+          失败：("", "错误原因") —— 调用方降级为确定性摘录
         """
-        import hashlib
-
-        # 指纹只看 role + content + tool_calls，拼成字符串后取 md5
-        raw = ""
-        for m in old_messages:
-            raw += str(m.get("role", "")) + str(m.get("content", "")) + str(m.get("tool_calls", ""))
-        key = hashlib.md5(raw.encode("utf-8")).hexdigest()
+        key = self._fingerprint(old_messages)
 
         if key in self._summary_cache:
-            return self._summary_cache[key]
+            return self._summary_cache[key], None
 
         try:
             summary_text = self.summarizer_fn(old_messages) or ""
         except Exception as exc:
-            # 摘要函数出错打 debug 日志，方便调试区分「没触发」vs「崩了」
-            logger.debug("摘要函数异常（降级为纯截断）: %s", exc)
-            return ""
+            # 摘要函数出错：把错误带给调用方（会记入冷却 + 诊断状态）
+            return "", str(exc)
 
         if summary_text:
             # 缓存上限 32 条，满了就清空重来（简单粗暴但够用，
@@ -313,7 +386,73 @@ class ContextManager:
             if len(self._summary_cache) >= 32:
                 self._summary_cache.clear()
             self._summary_cache[key] = summary_text
-        return summary_text
+            return summary_text, None
+
+        # 摘要函数正常返回但内容为空：也算失败
+        return "", "摘要返回为空"
+
+    def _build_excerpt(self, old_messages: list) -> str:
+        """从旧消息里确定性挑出重点，生成摘录（不依赖 LLM）。
+
+        摘什么（按价值排序，总长不超过 EXCERPT_MAX_CHARS）：
+          1. 原始目标   — 第一条非空用户消息（最多 800 字符）
+          2. 近期决定   — 最后三条有内容的 user/assistant（各最多 600）
+          3. 报错现场   — 最后两条含错误关键词的工具结果（各最多 500）
+          4. 涉及文件   — 最多 8 个去重后的文件路径
+
+        被摘掉详细内容仍完整躺在 JSONL 里，模型可用 recall_history 找回。
+        """
+        parts = ["（仅作历史参考，以后续最新用户消息为准）"]
+
+        # 1. 原始目标：第一条非空用户消息
+        for m in old_messages:
+            content = str(m.get("content") or "").strip()
+            if m.get("role") == "user" and content:
+                parts.append("【原始目标】" + content[:800])
+                break
+
+        # 2. 近期决定：最后三条有内容的 user/assistant 消息
+        dialogs = []
+        for message in old_messages:
+            role = message.get("role")
+            content = str(message.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                dialogs.append(message)
+        if dialogs:
+            parts.append("【近期决定】")
+            for m in dialogs[-3:]:
+                parts.append("- [" + m.get("role", "?") + "] "
+                             + str(m.get("content"))[:600])
+
+        # 3. 报错现场：最后两条含错误关键词的工具结果
+        keywords = ("error", "exception", "failed", "失败", "报错")
+        errors = []
+        for m in old_messages:
+            if m.get("role") != "tool":
+                continue
+            lowered = str(m.get("content") or "").lower()
+            if any(k in lowered for k in keywords):
+                errors.append(m)
+        if errors:
+            parts.append("【报错现场】")
+            for m in errors[-2:]:
+                parts.append("- " + str(m.get("content"))[:500])
+
+        # 4. 涉及文件：从消息内容里抓路径样式，去重取前 8 个
+        paths = []
+        for m in old_messages:
+            text = str(m.get("content") or "") + str(m.get("tool_calls") or "")
+            for p in re.findall(r"[A-Za-z0-9_\-./\\]+\.[A-Za-z0-9]{1,5}", text):
+                if p not in paths:
+                    paths.append(p)
+        if paths:
+            parts.append("【涉及文件】" + " ".join(paths[:8]))
+
+        # 总长封顶：超了硬截断（摘录本来就该短，截断是最后防线）
+        excerpt = "\n".join(parts)
+        if len(excerpt) > EXCERPT_MAX_CHARS:
+            excerpt = excerpt[:EXCERPT_MAX_CHARS]
+        return excerpt
 
     def _token_budget_cut(self, messages: list, budget: int) -> int:
         """按 token 预算从后往前累加，返回保留区起始下标。

@@ -13,8 +13,8 @@
 
 【当前阶段】
   Phase 4：只读工具 AUTO，写操作 ASK，未知工具 DENY。
-  当前 MachineLoop 里 ASK 按 AUTO 执行（CLI 模式直接放行），
-  后续 Phase 再补真正的用户确认流程。
+  MachineLoop 遇到 ASK 会暂停循环返回 permission_required，
+  由上层（CLI / executor）向用户确认后再恢复执行。
 
 【权限来源（优先级）】
   1. 传入 tool_manager 时：先读工具 @tool 装饰器声明的权限
@@ -65,8 +65,7 @@ class PermissionManager:
             "list_dir": PermissionDecision.AUTO,
             "glob": PermissionDecision.AUTO,
             "grep": PermissionDecision.AUTO,
-            # 写操作工具：黄灯，需要确认
-            # 当前 MachineLoop 里 ASK 按 AUTO 执行（CLI 模式直接放行）
+            # 写操作工具：黄灯，需要用户确认后才执行
             "write_file": PermissionDecision.ASK,
             "edit_file": PermissionDecision.ASK,
             "run_test": PermissionDecision.ASK,
@@ -103,23 +102,24 @@ class PermissionManager:
         if self.plan_mode and name in self._WRITE_TOOLS:
             return PermissionDecision.DENY
 
-        decision = self._resolve_level(name)
+        decision = self._resolve_level(name, tool_call)
 
         # 无人值守：ASK 放行成 AUTO；DENY 不动，保留安全底线
         if self.auto_approve and decision == PermissionDecision.ASK:
             return PermissionDecision.AUTO
         return decision
 
-    def _resolve_level(self, name: str) -> PermissionDecision:
+    def _resolve_level(self, name: str, tool_call: ToolCall) -> PermissionDecision:
         """按优先级解析工具的原始权限级别（不含 auto_approve 转换）。
 
-        优先级：工具装饰器声明 > tool_defaults 表 > DENY。
+        优先级：工具装饰器声明（含按参数的动态权限）> tool_defaults 表 > DENY。
         """
         # 优先问 ToolManager：工具自己用 @tool 装饰器声明的权限最准
         # 只在工具确实注册过时采信；未注册时回落到硬编码表，
         # 保证老用法（不传 tool_manager）行为完全不变
         if self.tool_manager is not None and self.tool_manager.is_registered(name):
-            level = self.tool_manager.get_permission(name)
+            # 传 tool_call 让工具能按参数区分权限（如 memory: add 自动 / remove 确认）
+            level = self.tool_manager.get_permission(name, tool_call)
             # 字符串 -> 枚举；意外值一律当 DENY，宁严勿松
             if level == "auto":
                 return PermissionDecision.AUTO

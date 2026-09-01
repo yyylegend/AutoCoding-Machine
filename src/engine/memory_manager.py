@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+from filelock import FileLock
 from pathlib import Path
 
 
@@ -153,19 +154,21 @@ class MemoryManager:
         if info is None:
             return {"ok": False, "message": "target 只能是 memory 或 user"}
 
-        lines = self._load_lines(info["path"])
-        new_line = self._to_entry_line(content)
+        # 读取-校验-写回全程持锁，防止并发会话互相覆盖
+        with self._write_lock(info["path"]):
+            lines = self._load_lines(info["path"])
+            new_line = self._to_entry_line(content)
 
-        # 重复检查：一模一样的条目不再加
-        if new_line in lines:
-            return {"ok": True, "message": "该条目已存在，未重复添加。"}
+            # 重复检查：一模一样的条目不再加
+            if new_line in lines:
+                return {"ok": True, "message": "该条目已存在，未重复添加。"}
 
-        new_lines = lines + [new_line]
-        over = self._check_capacity(new_lines, info)
-        if over is not None:
-            return {"ok": False, "message": over}
+            new_lines = lines + [new_line]
+            over = self._check_capacity(new_lines, info)
+            if over is not None:
+                return {"ok": False, "message": over}
 
-        self._save(info["path"], new_lines)
+            self._save(info["path"], new_lines)
         return {"ok": True, "message": "已记录到 " + info["label"]
                 + "（已存盘，注入快照下次会话生效）：" + new_line}
 
@@ -188,23 +191,20 @@ class MemoryManager:
         if info is None:
             return {"ok": False, "message": "target 只能是 memory 或 user"}
 
-        lines = self._load_lines(info["path"])
-        matched = self._match_lines(lines, old_text)
-        if len(matched) == 0:
-            return {"ok": False, "message": "没有找到包含 \"" + old_text + "\" 的条目。"
-                    + self._entries_hint(lines)}
-        if len(matched) > 1:
-            return {"ok": False, "message": "有 " + str(len(matched))
-                    + " 条条目都包含 \"" + old_text + "\"，请换一个更精确的 old_text。"
-                    + self._entries_hint(lines)}
+        # 读取-校验-写回全程持锁，防止并发会话互相覆盖
+        with self._write_lock(info["path"]):
+            lines = self._load_lines(info["path"])
+            match_index, match_error = self._find_unique_match(lines, old_text)
+            if match_error is not None:
+                return {"ok": False, "message": match_error}
 
-        new_lines = list(lines)
-        new_lines[matched[0]] = self._to_entry_line(content)
-        over = self._check_capacity(new_lines, info)
-        if over is not None:
-            return {"ok": False, "message": over}
+            new_lines = list(lines)
+            new_lines[match_index] = self._to_entry_line(content)
+            over = self._check_capacity(new_lines, info)
+            if over is not None:
+                return {"ok": False, "message": over}
 
-        self._save(info["path"], new_lines)
+            self._save(info["path"], new_lines)
         return {"ok": True, "message": "已替换 " + info["label"]
                 + " 中的条目（已存盘，注入快照下次会话生效）。"}
 
@@ -222,21 +222,18 @@ class MemoryManager:
         if info is None:
             return {"ok": False, "message": "target 只能是 memory 或 user"}
 
-        lines = self._load_lines(info["path"])
-        matched = self._match_lines(lines, old_text)
-        if len(matched) == 0:
-            return {"ok": False, "message": "没有找到包含 \"" + old_text + "\" 的条目。"
-                    + self._entries_hint(lines)}
-        if len(matched) > 1:
-            return {"ok": False, "message": "有 " + str(len(matched))
-                    + " 条条目都包含 \"" + old_text + "\"，请换一个更精确的 old_text。"
-                    + self._entries_hint(lines)}
+        # 读取-校验-写回全程持锁，防止并发会话互相覆盖
+        with self._write_lock(info["path"]):
+            lines = self._load_lines(info["path"])
+            match_index, match_error = self._find_unique_match(lines, old_text)
+            if match_error is not None:
+                return {"ok": False, "message": match_error}
 
-        removed = lines[matched[0]]
-        new_lines = list(lines)
-        del new_lines[matched[0]]
+            removed = lines[match_index]
+            new_lines = list(lines)
+            del new_lines[match_index]
 
-        self._save(info["path"], new_lines)
+            self._save(info["path"], new_lines)
         return {"ok": True, "message": "已删除条目：" + removed}
 
     # ============================================================
@@ -257,10 +254,10 @@ class MemoryManager:
         """把文件读成条目行列表（去掉空行）。文件不存在返回空列表。"""
         if not path.is_file():
             return []
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            return []
+        # 写路径里的读取失败不能当成“空文件”。否则瞬时 I/O 错误后继续
+        # add/replace/remove，会用不完整内容覆盖旧记忆，造成数据丢失。
+        # 这里让异常向上传播，由 memory 工具转成 ToolResult 错误。
+        text = path.read_text(encoding="utf-8", errors="ignore")
         lines = []
         for line in text.splitlines():
             if line.strip() != "":
@@ -285,6 +282,20 @@ class MemoryManager:
                 matched.append(i)
         return matched
 
+    def _find_unique_match(self, lines: list, old_text: str) -> tuple:
+        """返回唯一匹配下标；匹配失败时返回可直接展示的错误。"""
+        matched = self._match_lines(lines, old_text)
+        if len(matched) == 0:
+            message = ("没有找到包含 \"" + old_text + "\" 的条目。"
+                       + self._entries_hint(lines))
+            return None, message
+        if len(matched) > 1:
+            message = ("有 " + str(len(matched)) + " 条条目都包含 \""
+                       + old_text + "\"，请换一个更精确的 old_text。"
+                       + self._entries_hint(lines))
+            return None, message
+        return matched[0], None
+
     def _check_capacity(self, lines: list, info: dict):
         """容量校验。超限返回错误信息字符串（附当前条目），没超返回 None。
 
@@ -305,10 +316,33 @@ class MemoryManager:
             return "（该记忆文件目前是空的）"
         return "当前条目：\n" + "\n".join(lines)
 
-    def _save(self, path: Path, lines: list) -> None:
-        """把条目行写回文件。自动创建父目录；结尾保留一个换行。"""
+    def _write_lock(self, path: Path) -> FileLock:
+        """写操作的过程锁：读取-校验-写回全程持有，防止并发会话互相覆盖。
+
+        锁文件放同目录（<memory-file>.lock），命名与 session_store 的
+        "<file>.lock" 模式一致。timeout=10 防止死锁——拿不到锁就报错，
+        由调用方（memory 工具）转成友好的错误信息。
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
-        if len(lines) == 0:
-            path.write_text("", encoding="utf-8")
-        else:
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return FileLock(str(path) + ".lock", timeout=10)
+
+    def _save(self, path: Path, lines: list) -> None:
+        """把条目行写回文件（原子替换）。要求调用方已持有 _write_lock。
+
+        原子替换的意思：先写同目录临时文件，写成功后一步替换目标文件。
+        读方不用加锁——要么读到旧的完整版，要么读到新的完整版，没有中间态。
+        写失败时删掉临时文件，旧文件一个字节都不会坏。
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "" if len(lines) == 0 else "\n".join(lines) + "\n"
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            tmp.replace(path)
+        except OSError:
+            # 写失败：清理临时文件；目标文件没被碰过，保持完整
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise

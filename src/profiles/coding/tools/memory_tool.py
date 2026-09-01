@@ -17,8 +17,10 @@
   所以不需要（也不应该）给 WorkspaceSandbox 开洞。
 
 【权限】
-  permission="auto"（自由写）。可控性靠三件事兜底：
-  CLI 实时显示写了什么、文件明文可编辑、条目量小随时可审。
+  按动作分级（2026-08-31 拍板）：
+    add     — AUTO（追加一条，旧内容不动，风险低）
+    replace / remove — ASK（会覆盖或删除旧内容，必须用户确认）
+  可控性兜底：CLI 实时显示写了什么、文件明文可编辑、条目量小随时可审。
 
 【谁会用】
   - MachineLoop → ToolManager → execute()
@@ -98,7 +100,19 @@ def build_memory_injection(workspace):
 # 工具定义
 # =====================================
 
-@tool(name="memory", permission="auto")
+def _memory_permission(tool_call) -> str:
+    """memory 工具的动态权限：按 action 区分。
+
+    add 是纯追加（旧内容不动），自动放行；
+    replace / remove 会覆盖或删掉旧条目（不可逆），必须用户确认。
+    """
+    action = tool_call.arguments.get("action")
+    if action in ("replace", "remove"):
+        return "ask"
+    return "auto"
+
+
+@tool(name="memory", permission="auto", permission_fn=_memory_permission)
 def execute(
     tool_call: ToolCall,
     sandbox: WorkspaceSandbox,
@@ -136,12 +150,17 @@ def execute(
 
     # ---- 分发到 MemoryManager ----
     manager = get_memory_manager(sandbox.workspace)
-    if action == "add":
-        result = manager.add(target, content)
-    elif action == "replace":
-        result = manager.replace(target, old_text, content)
-    else:
-        result = manager.remove(target, old_text)
+    try:
+        if action == "add":
+            result = manager.add(target, content)
+        elif action == "replace":
+            result = manager.replace(target, old_text, content)
+        else:
+            result = manager.remove(target, old_text)
+    except Exception as exc:
+        # 锁超时、磁盘异常等：转成工具错误给模型看，不能让循环崩掉
+        return execution_result(tool_call,
+                                "记忆写入失败（文件被占用或磁盘异常）：" + str(exc))
 
     # ---- 转成 ToolResult ----
     if result["ok"]:

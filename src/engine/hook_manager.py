@@ -63,6 +63,9 @@ class HookManager:
       cancelled          — 任务被取消（message, turn）
       failed             — 任务失败（error, turn）
       compacted          — 上下文被压缩（dropped, kept, turn）
+      compaction_fallback — 压缩降级或恢复警告（kind, error, turn）。
+                            kind=summary_fallback：摘要失败，改用确定性摘录；
+                            kind=context_overflow_retry：上下文超限，强制压缩后重试一次
     """
 
     def __init__(self):

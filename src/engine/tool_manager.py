@@ -30,13 +30,17 @@
 from src.engine.contracts import ToolCall, ToolResult
 
 
-def tool(name, permission="auto", timeout=120):
+def tool(name, permission="auto", timeout=120, permission_fn=None):
     """装饰器：把工具元数据挂到 execute 函数上。
 
     参数：
-      name       — 工具名，必须和该模块 schema() 里的 name 一致
-      permission — 权限级别："auto"（直接执行）/ "ask"（先问用户）/ "deny"（拒绝）
-      timeout    — 单次执行超时秒数（当前只记录，后续 Loop 用）
+      name          — 工具名，必须和该模块 schema() 里的 name 一致
+      permission    — 权限级别："auto"（直接执行）/ "ask"（先问用户）/ "deny"（拒绝）
+      timeout       — 单次执行超时秒数（当前只记录，后续 Loop 用）
+      permission_fn — 可选的动态权限函数，签名 (tool_call) -> "auto" / "ask" / "deny"。
+                      传了它，同一个工具可以按调用参数区分权限
+                      （比如 memory 工具：add 自动放行，remove 要确认）。
+                      优先级高于静态 permission。
 
     返回：
       装饰器函数。被装饰的 execute 行为完全不变，
@@ -51,6 +55,7 @@ def tool(name, permission="auto", timeout=120):
             "name": name,
             "permission": permission,
             "timeout": timeout,
+            "permission_fn": permission_fn,
         }
         return func
 
@@ -159,13 +164,14 @@ class ToolManager:
             self.max_output_chars,
         )
 
-    def get_permission(self, tool_name) -> str:
-        """返回工具声明的权限级别字符串。
+    def get_permission(self, tool_name, tool_call=None) -> str:
+        """返回工具在本次调用下的权限级别字符串。
 
-        规则：
-          - 未注册的工具    -> "deny"（不认识的一律拒绝）
-          - 注册了但没装饰器 -> "auto"（老工具默认放行，兼容期行为）
-          - 有装饰器        -> 装饰器里声明的 permission
+        规则（按优先级）：
+          - 未注册的工具            -> "deny"（不认识的一律拒绝）
+          - 注册了但没装饰器        -> "auto"（老工具默认放行，兼容期行为）
+          - 有装饰器 + permission_fn -> 按本次 tool_call 动态判定
+          - 有装饰器                -> 装饰器里声明的静态 permission
 
         谁调用：
           PermissionManager.check。
@@ -176,5 +182,11 @@ class ToolManager:
         meta = self._metas.get(tool_name)
         if meta is None:
             return "auto"
+
+        # 动作级权限：装饰器给了 permission_fn 时，按本次调用的参数判定。
+        # 比如同一个工具 add 自动放行、remove 要问用户。
+        permission_fn = meta.get("permission_fn")
+        if permission_fn is not None and tool_call is not None:
+            return permission_fn(tool_call)
 
         return meta["permission"]

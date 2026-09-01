@@ -17,6 +17,8 @@
     不存 system prompt、不存 injections、不存 compact 摘要
   - 本模块是消息历史的唯一真相源
   - 不建索引文件、不自动删除旧 Session
+  - 只增不减：本模块没有任何"覆盖/重写历史"的方法，
+    JSONL 里的原始记录永远完整保留（结构性保证，不靠注释自觉）
 
 【谁会用】
   - MachineLoop：产生消息时逐条落盘
@@ -126,21 +128,6 @@ class SessionStore:
                     # 半截行：多半是上次崩溃留下的，跳过就好
                     continue
         return history
-
-    def overwrite(self, messages: list):
-        """用新消息列表整体覆盖 JSONL（compact 压缩后重写用）。
-
-        参数：
-          messages — 新的完整消息列表（只应含原始 history，不含 system/injections）
-
-        先写临时文件再原子替换，防止写一半崩溃把原文件弄坏。
-        """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".jsonl.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            for m in messages:
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
-        tmp.replace(self.path)
 
 
 def list_sessions(sessions_dir) -> list:

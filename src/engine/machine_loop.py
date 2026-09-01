@@ -38,6 +38,8 @@ from src.engine.contracts import (
 
 import time
 
+from src.common.llm_client import ContextLengthExceededError
+from src.common.token_utils import count_tokens_old_style as count_tokens
 from src.engine.hook_manager import HookManager
 
 
@@ -99,6 +101,49 @@ class MachineLoop:
         self.context_manager = context_manager
         self.session_store = session_store
 
+    def _recover_from_context_overflow(self, messages, turn):
+        """上下文超限后的唯一一次恢复尝试：强制压缩 → 重调模型一次。
+
+        返回（统一用 dict，调用方一眼能看懂）：
+          恢复成功 → {"status": "ok", "messages": 压缩后的消息, "response": 模型回复}
+          恢复失败 → {"status": "failed", "error": "人话说明"}
+
+        三条失败路径都直接返回明确错误，绝不循环重试：
+          1. 没配压缩器 —— 压缩无从谈起
+          2. 压缩后 token 没减少 —— 再压也压不动，重试是浪费
+          3. 重试仍然超限 —— 模型窗口就是装不下这批消息
+        """
+        if self.context_manager is None:
+            self.hooks.fire("failed", error="context_overflow", turn=turn)
+            return {"status": "failed",
+                    "error": "上下文超出模型窗口，且未配置压缩器，无法自动恢复"}
+
+        # 先量一次压缩前的 token 数，用来判断"压缩到底有没有进展"
+        tokens_before = count_tokens(messages)
+        compacted = self.context_manager.maybe_compact(messages, force=True)
+        tokens_after = count_tokens(compacted)
+
+        if tokens_after >= tokens_before:
+            self.hooks.fire("failed", error="context_overflow", turn=turn)
+            return {"status": "failed",
+                    "error": "上下文超出模型窗口，且强制压缩没有减少内容，无法自动恢复"}
+
+        # 压缩有进展，重试一次（这是唯一的一次，没有第二次）
+        self.hooks.fire(
+            "compaction_fallback",
+            kind="context_overflow_retry",
+            error="上下文超限，已强制压缩后重试一次",
+            turn=turn,
+        )
+        try:
+            response = self.model_fn(compacted)
+        except ContextLengthExceededError:
+            self.hooks.fire("failed", error="context_overflow", turn=turn)
+            return {"status": "failed",
+                    "error": "上下文压缩后仍超出模型窗口，请用 /compact 或开新会话"}
+
+        return {"status": "ok", "messages": compacted, "response": response}
+
     def _record(self, message: dict):
         """把一条新消息写进 session 文件（如果配了 session_store）。
 
@@ -149,6 +194,13 @@ class MachineLoop:
                     self.hooks.fire("compacted",
                         dropped=before_count - kept_excl_summary,
                         kept=kept_excl_summary, turn=turn)
+                    # 摘要失败降级为确定性摘录时，向 CLI 发一次警告，
+                    # 让用户知道"这次摘要是兜底摘录，不是 LLM 总结"
+                    if self.context_manager.last_compaction_mode == "excerpt":
+                        self.hooks.fire("compaction_fallback",
+                            kind="summary_fallback",
+                            error=self.context_manager.last_compaction_error,
+                            turn=turn)
 
             # 第 1 步：检查取消
             if cancel.is_cancelled():
@@ -156,7 +208,18 @@ class MachineLoop:
                 return {"status": "cancelled"}
 
             # 第 2 步：调模型（用构造时传入的 model_fn）
-            response = self.model_fn(messages)
+            # 上下文超限时的恢复策略：强制压缩一次 → 重试一次。
+            # 只重试一次是硬约束：压缩没进展或二次仍超限就明确失败，
+            # 否则"压缩没用还反复调模型"就是个死循环。
+            try:
+                response = self.model_fn(messages)
+            except ContextLengthExceededError:
+                outcome = self._recover_from_context_overflow(messages, turn)
+                if outcome["status"] == "failed":
+                    return outcome  # 恢复失败，返回清晰错误，不重试
+                # 恢复成功：后续轮次也用压缩后的消息列表
+                messages = outcome["messages"]
+                response = outcome["response"]
 
             # 第 3 步：没有 tool_calls，检查是否完成
             if not response.tool_calls:

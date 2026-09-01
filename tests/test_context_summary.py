@@ -4,8 +4,8 @@
     1. 不超限时不触发摘要（summarizer 未被调用）
     2. 超限且旧消息 >= 4 条时触发摘要，结果中包含 [历史摘要] 消息且位置正确
     3. 旧消息 < 4 条时不摘要、纯截断
-    4. summarizer 抛异常时降级为纯截断（结果与不传 summarizer 一致，不崩溃）
-    5. summarizer 返回空字符串时不插入摘要消息
+    4. summarizer 抛异常时降级为确定性摘录（任务不中断）
+    5. summarizer 返回空字符串时同样降级为确定性摘录
     6. 不传 summarizer_fn 时行为与旧版一致
     7. 摘要后 assistant(tool_calls)+tool 配对依然完整
     8. make_summarizer 在 CONTEXT_SUMMARY_ENABLED=False 时返回 None
@@ -117,8 +117,12 @@ class TestContextSummary(unittest.TestCase):
         # 验证结果中没有 [历史摘要]
         self._assert_no_summary_msg(result, "test_03")
 
-    def test_04_silent_degrade_on_exception(self):
-        """测试 4：summarizer 抛异常时降级为纯截断，不崩溃，与不传 summarizer 一致。"""
+    def test_04_fallback_excerpt_on_exception(self):
+        """测试 4：summarizer 抛异常时降级为确定性摘录，任务不中断。
+
+        旧行为是静默降级为纯截断（旧消息全丢）。新策略改为插入摘录：
+        丢的信息更少，且摘录是本地生成的，不依赖 LLM。
+        """
         # 构造触发的例子
         messages = self.messages_template(8)  # system + 8 条 = 9 条
 
@@ -132,22 +136,44 @@ class TestContextSummary(unittest.TestCase):
         )
         result_with_error = ctx_mgr_with_error.maybe_compact(messages)
 
-        # 情况 B：不传 summarizer
+        # 情况 B：不传 summarizer（纯截断基准）
         ctx_mgr_without = ContextManager(max_messages=5)
         result_without = ctx_mgr_without.maybe_compact(messages)
 
-        # 两者结果应该完全相同（都退化为纯截断）
+        # 验证降级模式被正确记录
         self.assertEqual(
-            len(result_with_error),
-            len(result_without),
-            "异常降级后长度应与纯截断一致",
+            ctx_mgr_with_error.last_compaction_mode,
+            "excerpt",
+            "摘要失败应降级为确定性摘录",
         )
         self.assertEqual(
-            result_with_error, result_without, "异常降级后内容应与纯截断一致"
+            ctx_mgr_with_error.last_compaction_error,
+            "模拟 LLM 错误",
+            "诊断状态应记录失败原因",
         )
 
-    def test_05_silent_degrade_on_empty_string(self):
-        """测试 5：summarizer 返回空字符串时不插入摘要消息。"""
+        # 验证插入了一条摘录消息，且带"仅作历史参考"的免责声明
+        self.assertEqual(
+            self._count_summary_msg(result_with_error), 1, "应插入一条摘录消息"
+        )
+        summary_idx = self._find_summary_msg_idx(result_with_error)
+        self.assertEqual(summary_idx, 1, "摘录应在 system 之后的第一条")
+        self.assertIn(
+            "仅作历史参考",
+            str(result_with_error[summary_idx].get("content", "")),
+            "摘录开头应标记免责声明",
+        )
+
+        # 验证摘录不影响近期消息：去掉摘录后，其余部分与纯截断完全一致
+        without_excerpt = (
+            result_with_error[:summary_idx] + result_with_error[summary_idx + 1 :]
+        )
+        self.assertEqual(
+            without_excerpt, result_without, "去掉摘录后应与纯截断结果一致"
+        )
+
+    def test_05_fallback_excerpt_on_empty_string(self):
+        """测试 5：summarizer 返回空字符串时同样降级为确定性摘录。"""
         messages = self.messages_template(8)
 
         def mock_empty_summary(_):
@@ -157,8 +183,12 @@ class TestContextSummary(unittest.TestCase):
         ctx_mgr = ContextManager(max_messages=5, summarizer_fn=mock_empty_summary)
         result = ctx_mgr.maybe_compact(messages)
 
-        # 验证没有 [历史摘要] 消息
-        self._assert_no_summary_msg(result, "test_05")
+        # 空字符串也算失败，降级为摘录
+        self.assertEqual(ctx_mgr.last_compaction_mode, "excerpt")
+        self.assertEqual(ctx_mgr.last_compaction_error, "摘要返回为空")
+        self.assertEqual(
+            self._count_summary_msg(result), 1, "空摘要应降级为一条摘录消息"
+        )
 
     def test_06_no_summarizer_fn_behaves_like_old_version(self):
         """测试 6：不传 summarizer_fn 时行为与旧版一致。"""

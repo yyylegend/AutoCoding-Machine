@@ -23,6 +23,44 @@ import requests
 from src.config.settings import settings
 
 
+class ContextLengthExceededError(Exception):
+    """上下文超出模型窗口的领域异常。
+
+    什么时候抛：HTTP 400/413，且响应体里含 context-length 关键词。
+    为什么不直接用 requests.HTTPError：
+      调用方（MachineLoop）需要区分"上下文超限"（可以压缩对话后重试）
+      和普通 400（参数错了，压缩一百次也没用，重试纯属浪费）。
+    """
+
+
+# 响应体里的 context-length 关键词（小写匹配）：
+#   OpenAI 官方风格  → "context_length_exceeded"
+#   vLLM / 多数网关  → "maximum context length"
+_CONTEXT_LENGTH_KEYWORDS = ("context_length_exceeded", "maximum context length")
+
+
+def _raise_for_status(resp):
+    """非 2xx 时抛错：先识别上下文超限（可自动恢复），其余保持 HTTPError。
+
+    只看状态码不够——400 有很多原因（tool JSON 解析失败、参数错等），
+    全都当成"上下文超限"去压缩重试，只会白压缩一轮再原样报错。
+    所以必须状态码 + 响应体关键词双重确认。
+    """
+    if resp.ok:
+        return
+    body = resp.text[:2000].lower()
+    if resp.status_code in (400, 413) and any(
+        k in body for k in _CONTEXT_LENGTH_KEYWORDS
+    ):
+        raise ContextLengthExceededError(
+            "上下文超出模型窗口（HTTP " + str(resp.status_code) + "）"
+        )
+    raise requests.HTTPError(
+        f"LLM API {resp.status_code}: {resp.text[:2000]}",
+        response=resp,
+    )
+
+
 def chat(messages, tools=None, tool_choice="auto", timeout=None,
          model=None, base_url=None, api_key=None, auth_type=None, max_tokens=None):
     """调用 LLM（兼容 OpenAI 格式）。
@@ -146,13 +184,9 @@ def chat(messages, tools=None, tool_choice="auto", timeout=None,
         timeout=timeout,
     )
 
-    # 非 2xx 时保留 vLLM 的错误正文。否则 raise_for_status() 只显示 HTTPError，
-    # 无法区分 tool JSON 解析失败、上下文超限或服务端异常。
-    if not resp.ok:
-        raise requests.HTTPError(
-            f"LLM API {resp.status_code}: {resp.text[:2000]}",
-            response=resp,
-        )
+    # 非 2xx 时抛错。先识别上下文超限（抛领域异常，可自动恢复），
+    # 其余保持 HTTPError，错误正文保留 vLLM 的原文以便排查。
+    _raise_for_status(resp)
 
     # 从 LLM 返回的 JSON 里取数据
     # 返回格式固定(OpenAI 兼容):
@@ -283,10 +317,7 @@ def chat_stream(messages, tools=None, tool_choice="auto", timeout=None,
         timeout=timeout,
         stream=True,  # 关键：不一次性读完，逐块拿
     )
-    if not resp.ok:
-        raise requests.HTTPError(
-            f"LLM API {resp.status_code}: {resp.text[:2000]}", response=resp,
-        )
+    _raise_for_status(resp)
 
     # vLLM / OpenAI 的 SSE 响应通常不声明 charset，requests 会默认用 ISO-8859-1
     # 解码，导致 UTF-8 中文乱码。这里强制 UTF-8。

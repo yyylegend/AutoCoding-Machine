@@ -492,8 +492,26 @@ def register_cli_hooks(hooks: HookManager):
             f"  [{THEME['warning']}]⚠ 上下文已压缩：收起 {dropped} 条旧消息，保留 {kept} 条（旧内容已摘要）[/{THEME['warning']}]"
         )
 
+    def on_compaction_fallback(**kw):
+        """显示摘要摘录兜底或上下文超限强制重试提醒。
+
+        两种情况共用一个警告事件，通过 kind 区分文案。
+        """
+        kind = kw.get("kind") or "summary_fallback"
+        error = kw.get("error") or "未知原因"
+        if kind == "context_overflow_retry":
+            console.print(
+                f"  [{THEME['warning']}]⚠ {error}[/{THEME['warning']}]"
+            )
+            return
+        console.print(
+            f"  [{THEME['warning']}]⚠ 摘要失败（{error}），已改用历史摘录；"
+            f"细节可用 recall_history 找回[/{THEME['warning']}]"
+        )
+
     hooks.on("pre_tool", on_pre_tool)
     hooks.on("post_tool", on_post_tool)
     hooks.on("done", on_done)
     hooks.on("cancelled", on_cancelled)
     hooks.on("compacted", on_compacted)
+    hooks.on("compaction_fallback", on_compaction_fallback)
