@@ -4,7 +4,9 @@
   本文件把"ContextManager 该怎么配"收编成单一真相源：
     - init_coding_tokenizer()      — 初始化 tokenizer（根据 .env 模型名）
     - make_summarizer()            — 造摘要函数（带开关）
-    - resolve_token_budget()       — 算 token 预算（问供应商，失败用默认值）
+    - resolve_context_length()     — 解析模型的完整上下文窗口
+    - calculate_token_budget()     — 从窗口算安全输入预算
+    - resolve_token_budget()       — 按优先级解析并缓存最终预算
     - build_context_manager()      — 一步到位，两边都调这个
 
   以后想改压缩配置，天下只有这一个地方可改。
@@ -19,13 +21,14 @@ from src.config.settings import settings
 from src.engine import ContextManager
 
 
-# 兜底的上下文 token 预算：供应商 API 查不到窗口大小时用。
-# 故意设得保守——哪怕模型有 1M 上下文也不该用满：
-#   注意力衰减（lost in the middle）、成本、Prompt Cache 命中率都要求省着用。
-DEFAULT_TOKEN_BUDGET = 128000
+# 供应商 API 查不到窗口大小时使用的保守默认窗口。
+DEFAULT_CONTEXT_LENGTH = 128000
 
-# 查到窗口后留给输出的比例：预算 = 窗口 * 0.8（留 20% 给模型生成）
+# 输入最多使用完整窗口的 80%，避免上下文长期顶格运行。
 BUDGET_RATIO = 0.8
+
+# 除模型最大输出外，再留少量空间给消息封装和不同 tokenizer 的估算误差。
+TOKEN_SAFETY_MARGIN = 1024
 
 # resolve_token_budget() 的进程内缓存：
 # 多次构造 ContextManager 时复用模型上下文窗口查询结果。
@@ -129,11 +132,45 @@ def make_summarizer():
     return summarize
 
 
-def resolve_token_budget() -> int:
-    """算出上下文 token 预算（进程内只真正查一次，之后走缓存）。
+def resolve_context_length() -> int:
+    """按优先级解析模型的完整上下文窗口。
 
-    先问供应商 API 拿模型的上下文窗口（vLLM 会返回 max_model_len），
-    拿到就用窗口的 80%；查不到（OpenAI 不返回 / 网络问题）就用兜底值。
+    优先级：
+      1. CODING_CONTEXT_LENGTH 显式配置；
+      2. 供应商 /models 返回的模型元数据；
+      3. DEFAULT_CONTEXT_LENGTH 保守默认值。
+    """
+    if settings.CODING_CONTEXT_LENGTH is not None:
+        if settings.CODING_CONTEXT_LENGTH <= 0:
+            raise ValueError("CODING_CONTEXT_LENGTH 必须是正整数")
+        return settings.CODING_CONTEXT_LENGTH
+
+    detected = fetch_model_context_window(
+        base_url=settings.CODING_LLM_BASE_URL,
+        api_key=settings.CODING_LLM_API_KEY,
+        auth_type=settings.CODING_LLM_AUTH_TYPE,
+        model=settings.CODING_LLM_MODEL,
+    )
+    return detected or DEFAULT_CONTEXT_LENGTH
+
+
+def calculate_token_budget(context_length: int, max_output_tokens: int) -> int:
+    """根据完整窗口计算安全的输入 token 预算。
+
+    同时应用两条限制并取更小值：
+      - 最多使用完整窗口的 80%；
+      - 必须给模型输出和估算误差留出空间。
+    """
+    if context_length <= max_output_tokens + TOKEN_SAFETY_MARGIN:
+        raise ValueError("上下文窗口必须大于最大输出 token 与安全余量之和")
+
+    ratio_budget = int(context_length * BUDGET_RATIO)
+    reserved_budget = context_length - max_output_tokens - TOKEN_SAFETY_MARGIN
+    return min(ratio_budget, reserved_budget)
+
+
+def resolve_token_budget() -> int:
+    """解析并缓存上下文输入预算（进程内只计算一次）。
 
     返回：
       int，token 预算
@@ -142,16 +179,11 @@ def resolve_token_budget() -> int:
     if _budget_cache is not None:
         return _budget_cache
 
-    ctx_window = fetch_model_context_window(
-        base_url=settings.CODING_LLM_BASE_URL,
-        api_key=settings.CODING_LLM_API_KEY,
-        auth_type=settings.CODING_LLM_AUTH_TYPE,
-        model=settings.CODING_LLM_MODEL,
+    context_length = resolve_context_length()
+    _budget_cache = calculate_token_budget(
+        context_length=context_length,
+        max_output_tokens=settings.CODING_LLM_MAX_TOKENS,
     )
-    if ctx_window:
-        _budget_cache = int(ctx_window * BUDGET_RATIO)
-    else:
-        _budget_cache = DEFAULT_TOKEN_BUDGET
     return _budget_cache
 
 

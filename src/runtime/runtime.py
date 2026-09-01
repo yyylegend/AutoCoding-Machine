@@ -21,6 +21,7 @@ class AgentRuntime:
         self.guard = components.get("guard")
         self.hooks = components.get("hooks")
         self.context_manager = components.get("context_manager")
+        self.context_selector = components.get("context_selector")
         self.session_store = components.get("session_store")
 
     def build_messages(self, history, extra_injections=None):
@@ -36,3 +37,12 @@ class AgentRuntime:
     def run(self, messages, cancel):
         """运行底层 MachineLoop。"""
         return self.loop.run(messages, cancel)
+
+    def set_session_store(self, session_store):
+        """切换当前 Session，并同步 Loop 与自动上下文选择器。"""
+        self.session_store = session_store
+        self.loop.session_store = session_store
+        if self.context_selector is not None:
+            update_session = getattr(self.context_selector, "set_current_session", None)
+            if update_session is not None:
+                update_session(session_store.session_id)

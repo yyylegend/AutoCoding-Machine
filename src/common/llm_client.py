@@ -223,8 +223,9 @@ def chat(messages, tools=None, tool_choice="auto", timeout=None,
 def fetch_model_context_window(base_url=None, api_key=None, auth_type=None, model=None):
     """从 LLM 供应商 API 查询模型的上下文窗口大小。
 
-    vLLM 的 /models 端点返回 max_model_len；
-    OpenAI 不返回（返回 None，调用方用默认值兜底）。
+    vLLM 的 /models 端点通常返回 max_model_len；其他兼容服务可能使用
+    context_length 或 max_context_length。OpenAI 不返回这些字段时，
+    返回 None，由调用方继续走兜底。
 
     参数与 chat() 的覆盖参数一致，不传就用 settings.LLM_*。
 
@@ -247,8 +248,14 @@ def fetch_model_context_window(base_url=None, api_key=None, auth_type=None, mode
         target = model or settings.LLM_MODEL
         for m in resp.json().get("data", []):
             if m.get("id") == target:
-                # vLLM 返回 max_model_len；OpenAI 没有此字段
-                return m.get("max_model_len")
+                for field in ("max_model_len", "context_length", "max_context_length"):
+                    value = m.get(field)
+                    try:
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if value > 0:
+                        return value
     except Exception:
         return None
     return None

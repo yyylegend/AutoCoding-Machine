@@ -26,6 +26,10 @@ class Settings:
     CODING_LLM_AUTH_TYPE: str = os.getenv("CODING_LLM_AUTH_TYPE", LLM_AUTH_TYPE)
     CODING_LLM_TIMEOUT_SEC: int = int(os.getenv("CODING_LLM_TIMEOUT_SEC", str(LLM_TIMEOUT_SEC)))
     CODING_LLM_MAX_TOKENS: int = int(os.getenv("CODING_LLM_MAX_TOKENS", str(LLM_MAX_TOKENS)))
+    _CODING_CONTEXT_LENGTH_RAW: str = os.getenv("CODING_CONTEXT_LENGTH", "").strip()
+    CODING_CONTEXT_LENGTH: int | None = (
+        int(_CODING_CONTEXT_LENGTH_RAW) if _CODING_CONTEXT_LENGTH_RAW else None
+    )
 
     CODING_MAX_TURNS: int = int(os.getenv("CODING_MAX_TURNS", "30"))
     CONTEXT_SUMMARY_ENABLED: bool = os.getenv("CONTEXT_SUMMARY_ENABLED", "false").lower() == "true"

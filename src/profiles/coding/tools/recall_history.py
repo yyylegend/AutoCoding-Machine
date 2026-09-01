@@ -79,7 +79,7 @@ def tokenize(text: str) -> list:
 # 语料收集：把多个 session 读成一个语料表
 # =====================================
 
-def _load_corpus(sessions_dir) -> list:
+def _load_corpus(sessions_dir, exclude_session_id: str | None = None) -> list:
     """读最近几个 session 的全部消息，摊平成一条统一的语料表。
 
     返回：
@@ -90,6 +90,8 @@ def _load_corpus(sessions_dir) -> list:
     corpus = []
     # list_sessions 已经按修改时间从新到旧排好序
     for session in list_sessions(sessions_dir)[:RECALL_SESSION_LIMIT]:
+        if session["id"] == exclude_session_id:
+            continue
         jsonl_path = sessions_dir / (session["id"] + ".jsonl")
         idx = 0
         try:
@@ -148,7 +150,7 @@ def _merge_adjacent(hits: list) -> list:
     return merged
 
 
-def _coverage_hits(corpus: list, query_tokens: list) -> list:
+def _coverage_hits(corpus: list, query_tokens: list, min_token_matches: int = 1) -> list:
     """BM25 失效时的兜底：按"命中了几个查询词"打分。
 
     为什么需要兜底（这个坑很隐蔽）：
@@ -164,15 +166,16 @@ def _coverage_hits(corpus: list, query_tokens: list) -> list:
       和 BM25 命中同结构的列表，score 是覆盖到的查询词个数
     """
     hits = []
+    unique_query_tokens = set(query_tokens)
     for entry in corpus:
         msg = entry["msg"]
         text = (str(msg.get("content", "") or "")
                 + " " + str(msg.get("tool_calls") or "")).lower()
         covered = 0
-        for token in query_tokens:
+        for token in unique_query_tokens:
             if token in text:
                 covered += 1
-        if covered > 0:
+        if covered >= min_token_matches:
             hits.append({
                 "session_id": entry["session_id"],
                 "mtime": entry["mtime"],
@@ -225,28 +228,30 @@ def _format_hit(hit: dict, corpus: list) -> str:
 # 工具入口
 # =====================================
 
-@tool(name="recall_history", permission="auto")
-def execute(
-    tool_call: ToolCall,
-    sandbox: WorkspaceSandbox,
+def search_history(
+    sessions_dir,
+    query: str,
     max_output_chars: int,
-) -> ToolResult:
-    """执行 recall_history：从工作区近期会话中检索相关片段。
+    max_hits: int = MAX_HITS,
+    exclude_session_id: str | None = None,
+    min_token_matches: int = 1,
+) -> dict:
+    """搜索会话历史，返回适合直接注入或展示的文本。
 
-    参数：
-      query — 必填，搜索关键词（文件名、变量名、报错信息、中文短语都行）
+    recall_history 工具和 ContextSelector 共用这一入口，避免两套 BM25
+    逻辑逐渐产生不同结果。exclude_session_id 用于自动召回时排除当前会话。
     """
-    query = get_str_arg(tool_call, "query")
-    if query is None:
-        return invalid_result(tool_call, "recall_history 需要参数 query")
-
-    sessions_dir = sessions_dir_for(sandbox.workspace)
-    corpus = _load_corpus(sessions_dir)
+    corpus = _load_corpus(sessions_dir, exclude_session_id=exclude_session_id)
     if not corpus:
-        return ok_result(tool_call, "没找到会话文件（还没有对话历史）")
+        return {"content": "没找到会话文件（还没有对话历史）", "matches": 0}
 
     # ---- 分词建索引 + BM25 打分 ----
     from rank_bm25 import BM25Okapi
+
+    query_tokens = tokenize(query)
+    if not query_tokens:
+        return {"content": "没找到与当前问题相关的历史内容", "matches": 0}
+    required_matches = min(min_token_matches, len(set(query_tokens)))
 
     docs = []
     for entry in corpus:
@@ -258,12 +263,13 @@ def execute(
         docs.append(tokenize(content))
 
     bm25 = BM25Okapi(docs)
-    scores = bm25.get_scores(tokenize(query))
+    scores = bm25.get_scores(query_tokens)
 
     # ---- 取所有正分命中，按 session + 行号排好再做相邻合并 ----
     hits = []
     for i, score in enumerate(scores):
-        if score > 0:
+        token_matches = len(set(docs[i]).intersection(set(query_tokens)))
+        if score > 0 and token_matches >= required_matches:
             hits.append({
                 "session_id": corpus[i]["session_id"],
                 "mtime": corpus[i]["mtime"],
@@ -273,17 +279,17 @@ def execute(
     if not hits:
         # 语料太小时 BM25 的 IDF 会退化成 0（见 _coverage_hits 的说明），
         # 这时改用关键词覆盖匹配兜底，保证"明明有却搜不到"的情况不发生
-        hits = _coverage_hits(corpus, tokenize(query))
+        hits = _coverage_hits(corpus, query_tokens, min_token_matches=required_matches)
 
     if not hits:
-        return ok_result(tool_call, "没找到与 \"" + query + "\" 相关的历史内容")
+        return {"content": "没找到与 \"" + query + "\" 相关的历史内容", "matches": 0}
 
     hits.sort(key=lambda h: (h["session_id"], h["idx"]))
     merged = _merge_adjacent(hits)
 
     # ---- 排序：分数高的在前；同分时较新的 session 在前 ----
     merged.sort(key=lambda h: (-h["score"], -h["mtime"]))
-    merged = merged[:MAX_HITS]
+    merged = merged[:max_hits]
 
     # ---- 渲染 + 统一裁剪（不超过 max_output_chars）----
     blocks = [_format_hit(hit, corpus) for hit in merged]
@@ -299,7 +305,34 @@ def execute(
         else:
             output += notice
 
-    return ok_result(tool_call, output, metadata={"matches": len(merged)})
+    return {"content": output, "matches": len(merged)}
+
+
+@tool(name="recall_history", permission="auto")
+def execute(
+    tool_call: ToolCall,
+    sandbox: WorkspaceSandbox,
+    max_output_chars: int,
+) -> ToolResult:
+    """执行 recall_history：从工作区近期会话中检索相关片段。
+
+    参数：
+      query — 必填，搜索关键词（文件名、变量名、报错信息、中文短语都行）
+    """
+    query = get_str_arg(tool_call, "query")
+    if query is None:
+        return invalid_result(tool_call, "recall_history 需要参数 query")
+
+    result = search_history(
+        sessions_dir=sessions_dir_for(sandbox.workspace),
+        query=query,
+        max_output_chars=max_output_chars,
+    )
+    return ok_result(
+        tool_call,
+        result["content"],
+        metadata={"matches": result["matches"]},
+    )
 
 
 # =====================================

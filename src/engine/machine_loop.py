@@ -69,6 +69,7 @@ class MachineLoop:
         final_verifier,
         hooks: HookManager | None = None,
         context_manager=None,
+        context_selector=None,
         session_store=None,
     ):
         """初始化。
@@ -86,6 +87,8 @@ class MachineLoop:
           final_verifier  — 完成判定函数，signature: (messages, response) -> bool
           hooks           — 钩子管理器，可选。不传就用空壳（不报错）。
           context_manager — 上下文管理器，可选。不传就不压缩。
+          context_selector— 上下文选择器，可选。只改变本次模型请求视图，
+                            不修改 messages，也不写入 Session。
           session_store   — Session 存储器，可选（SessionStore 实例）。
                             传了的话，循环中产生的每条新消息
                             （助手回复 / 工具结果）都会同步写盘。
@@ -99,9 +102,16 @@ class MachineLoop:
         self.final_verifier = final_verifier
         self.hooks = hooks or HookManager()
         self.context_manager = context_manager
+        self.context_selector = context_selector
         self.session_store = session_store
 
-    def _recover_from_context_overflow(self, messages, turn):
+    def _select_context(self, messages):
+        """构造本次模型请求视图；原始 messages 始终保持不变。"""
+        if self.context_selector is None:
+            return messages
+        return self.context_selector.select(messages)
+
+    def _recover_from_context_overflow(self, messages, turn, request_messages=None):
         """上下文超限后的唯一一次恢复尝试：强制压缩 → 重调模型一次。
 
         返回（统一用 dict，调用方一眼能看懂）：
@@ -119,9 +129,12 @@ class MachineLoop:
                     "error": "上下文超出模型窗口，且未配置压缩器，无法自动恢复"}
 
         # 先量一次压缩前的 token 数，用来判断"压缩到底有没有进展"
-        tokens_before = count_tokens(messages)
+        if request_messages is None:
+            request_messages = self._select_context(messages)
+        tokens_before = count_tokens(request_messages)
         compacted = self.context_manager.maybe_compact(messages, force=True)
-        tokens_after = count_tokens(compacted)
+        retry_messages = self._select_context(compacted)
+        tokens_after = count_tokens(retry_messages)
 
         if tokens_after >= tokens_before:
             self.hooks.fire("failed", error="context_overflow", turn=turn)
@@ -136,7 +149,7 @@ class MachineLoop:
             turn=turn,
         )
         try:
-            response = self.model_fn(compacted)
+            response = self.model_fn(retry_messages)
         except ContextLengthExceededError:
             self.hooks.fire("failed", error="context_overflow", turn=turn)
             return {"status": "failed",
@@ -211,10 +224,15 @@ class MachineLoop:
             # 上下文超限时的恢复策略：强制压缩一次 → 重试一次。
             # 只重试一次是硬约束：压缩没进展或二次仍超限就明确失败，
             # 否则"压缩没用还反复调模型"就是个死循环。
+            request_messages = self._select_context(messages)
             try:
-                response = self.model_fn(messages)
+                response = self.model_fn(request_messages)
             except ContextLengthExceededError:
-                outcome = self._recover_from_context_overflow(messages, turn)
+                outcome = self._recover_from_context_overflow(
+                    messages,
+                    turn,
+                    request_messages=request_messages,
+                )
                 if outcome["status"] == "failed":
                     return outcome  # 恢复失败，返回清晰错误，不重试
                 # 恢复成功：后续轮次也用压缩后的消息列表

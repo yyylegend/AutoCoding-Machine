@@ -334,5 +334,87 @@ class TestContextManagerWiring(unittest.TestCase):
         self.assertEqual(cm.max_tokens, 12345)
 
 
+class TestContextBudgetResolution(unittest.TestCase):
+    """上下文窗口解析与安全预算计算。"""
+
+    def setUp(self):
+        from src.config.settings import settings
+        from src.profiles.coding import context_setup
+
+        self.settings = settings
+        self.context_setup = context_setup
+        self.original_context_length = settings.CODING_CONTEXT_LENGTH
+        self.original_max_output = settings.CODING_LLM_MAX_TOKENS
+        context_setup._budget_cache = None
+
+    def tearDown(self):
+        self.settings.CODING_CONTEXT_LENGTH = self.original_context_length
+        self.settings.CODING_LLM_MAX_TOKENS = self.original_max_output
+        self.context_setup._budget_cache = None
+
+    def test_explicit_context_length_has_highest_priority(self):
+        from unittest.mock import patch
+
+        self.settings.CODING_CONTEXT_LENGTH = 64000
+        with patch.object(self.context_setup, "fetch_model_context_window") as fetch:
+            length = self.context_setup.resolve_context_length()
+
+        self.assertEqual(length, 64000)
+        fetch.assert_not_called()
+
+    def test_provider_context_length_is_used_when_not_configured(self):
+        from unittest.mock import patch
+
+        self.settings.CODING_CONTEXT_LENGTH = None
+        with patch.object(self.context_setup, "fetch_model_context_window", return_value=100000):
+            length = self.context_setup.resolve_context_length()
+
+        self.assertEqual(length, 100000)
+
+    def test_invalid_explicit_context_length_is_rejected(self):
+        self.settings.CODING_CONTEXT_LENGTH = 0
+        with self.assertRaisesRegex(ValueError, "必须是正整数"):
+            self.context_setup.resolve_context_length()
+
+    def test_default_context_length_is_last_fallback(self):
+        from unittest.mock import patch
+
+        self.settings.CODING_CONTEXT_LENGTH = None
+        with patch.object(self.context_setup, "fetch_model_context_window", return_value=None):
+            length = self.context_setup.resolve_context_length()
+
+        self.assertEqual(length, self.context_setup.DEFAULT_CONTEXT_LENGTH)
+
+    def test_budget_uses_ratio_for_large_window(self):
+        budget = self.context_setup.calculate_token_budget(100000, 4096)
+        self.assertEqual(budget, 80000)
+
+    def test_budget_reserves_output_for_small_window(self):
+        budget = self.context_setup.calculate_token_budget(8192, 4096)
+        self.assertEqual(budget, 3072)
+
+    def test_budget_rejects_window_smaller_than_reserved_space(self):
+        with self.assertRaisesRegex(ValueError, "上下文窗口必须大于"):
+            self.context_setup.calculate_token_budget(4096, 4096)
+
+    def test_provider_accepts_common_context_length_field(self):
+        from unittest.mock import patch
+
+        from src.common.llm_client import fetch_model_context_window
+
+        response = Mock(ok=True)
+        response.json.return_value = {
+            "data": [{"id": "demo-model", "context_length": "65536"}],
+        }
+        with patch("src.common.llm_client.requests.get", return_value=response):
+            length = fetch_model_context_window(
+                base_url="https://example.com/v1",
+                api_key="test-key",
+                model="demo-model",
+            )
+
+        self.assertEqual(length, 65536)
+
+
 if __name__ == "__main__":
     unittest.main()

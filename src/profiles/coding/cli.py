@@ -368,6 +368,7 @@ def run_cli(resume=None):
                     console.print(f"[{THEME['error']}]{switch_error}[/{THEME['error']}]\n")
                     continue
                 store = new_store
+                runtime.set_session_store(store)
                 history = new_history
                 base_view = []   # 新会话没有压缩产物，视图从头开始
                 base_count = 0

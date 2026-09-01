@@ -11,6 +11,7 @@ from src.engine import (
     PermissionManager,
 )
 from src.config.settings import settings
+from src.profiles.coding.context_selector import ContextSelector
 from src.profiles.coding.context_setup import build_context_manager
 from src.profiles.coding.system_prompt import get_system_prompt
 from src.profiles.coding.tools import CodingTools
@@ -26,6 +27,7 @@ def create_coding_runtime(
     hooks=None,
     session_store=None,
     context_manager=None,
+    context_selector=None,
     permission=None,
     guard=None,
     budget=None,
@@ -53,6 +55,12 @@ def create_coding_runtime(
         guard = GuardManager()
     if context_manager is None:
         context_manager = build_context_manager()
+    if context_selector is None:
+        current_session_id = getattr(session_store, "session_id", None)
+        context_selector = ContextSelector(
+            workspace=workspace,
+            current_session_id=current_session_id,
+        )
     if budget is None:
         budget = BudgetPolicy(max_turns=settings.CODING_MAX_TURNS)
 
@@ -76,6 +84,7 @@ def create_coding_runtime(
         final_verifier=lambda msgs, resp: resp.done,
         hooks=hooks,
         context_manager=context_manager,
+        context_selector=context_selector,
         session_store=session_store,
     )
     return AgentRuntime(
@@ -88,6 +97,7 @@ def create_coding_runtime(
             "guard": guard,
             "hooks": hooks,
             "context_manager": context_manager,
+            "context_selector": context_selector,
             "session_store": session_store,
         },
     )
