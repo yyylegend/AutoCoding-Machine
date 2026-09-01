@@ -509,9 +509,20 @@ def register_cli_hooks(hooks: HookManager):
             f"细节可用 recall_history 找回[/{THEME['warning']}]"
         )
 
+    def on_completion_rejected(**kw):
+        """模型宣布完成但缺少验证证据（FR-30）。
+
+        只显示一行简短状态，不显示第二个完整回答框——
+        正式回答由 Gate 裁定后统一提交，用户每个任务只看到一份持久回答。
+        """
+        console.print(
+            f"  [{THEME['warning']}]⏳ 正在验证修改…（最后一次修改后缺少验证证据）[/{THEME['warning']}]"
+        )
+
     hooks.on("pre_tool", on_pre_tool)
     hooks.on("post_tool", on_post_tool)
     hooks.on("done", on_done)
     hooks.on("cancelled", on_cancelled)
     hooks.on("compacted", on_compacted)
     hooks.on("compaction_fallback", on_compaction_fallback)
+    hooks.on("completion_rejected", on_completion_rejected)

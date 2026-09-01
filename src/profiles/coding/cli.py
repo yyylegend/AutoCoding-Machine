@@ -40,6 +40,7 @@ from src.engine import (
     sessions_dir_for,
 )
 from src.profiles.coding.context_setup import build_context_manager, resolve_token_budget
+from src.profiles.coding.completion_gate import CompletionGate
 from src.profiles.coding.system_prompt import get_system_prompt
 from src.profiles.coding.tools import CodingTools
 from src.runtime.factory import create_coding_runtime
@@ -205,8 +206,13 @@ def run_cli(resume=None):
     permission = PermissionManager(tool_manager=tools.get_manager())
     guard = GuardManager()
 
+    # 完成证据门：先建好，同时给 LLM 适配器（决定流式展示策略）
+    # 和 Runtime（裁决任务能否完成）用，两边必须是同一个实例
+    completion_gate = CompletionGate(tools.sandbox)
+
     # LLM 适配器（流式版，传 console 和 THEME 给它做终端渲染）
-    llm = StreamingAdapter(tools.get_schemas(), console, THEME)
+    llm = StreamingAdapter(tools.get_schemas(), console, THEME,
+                           publish_gate=completion_gate)
 
     # 上下文管理器：统一从 context_setup 构造（只看 token 预算 + 摘要，见 ADR-0003）
     token_budget = resolve_token_budget()
@@ -232,6 +238,7 @@ def run_cli(resume=None):
         hooks=hooks,
         session_store=store,
         context_manager=context_mgr,
+        completion_gate=completion_gate,
         permission=permission,
         guard=guard,
         budget=budget,
@@ -475,15 +482,15 @@ def run_cli(resume=None):
             messages = build_messages(history)
 
             cancel = CancellationToken()
-            # Runtime 已在启动时统一组装，循环本身可以跨轮复用。
-            loop = runtime.loop
 
             llm.reset_metrics()
             # Ctrl+C 在这一整段里的语义 = 取消当前任务（不退出 CLI）。
             # KeyboardInterrupt 可能从 loop.run（LLM 请求 / 工具执行）或
             # 权限确认后的继续执行中抛出来，统一在这里接住做平滑取消。
             try:
-                result = loop.run(messages, cancel)
+                # 新用户任务从 Runtime 入口开始：重置 CompletionGate 证据。
+                # ASK 权限后的继续执行用 resume，不能把本任务证据清掉。
+                result = runtime.run(messages, cancel)
 
                 # ---- ASK 权限确认：同意就真执行工具，结果回填后继续跑循环 ----
                 # 权限恢复：approve → tools.execute；deny → 构造拒绝结果。
@@ -524,7 +531,7 @@ def run_cli(resume=None):
                     store.append(result_msg)
 
                     # 带着结果继续跑循环，让模型接着干活
-                    result = loop.run(messages, cancel)
+                    result = runtime.resume(messages, cancel)
 
             except KeyboardInterrupt:
                 # 平滑取消：任务停掉，会话保留
@@ -564,6 +571,11 @@ def run_cli(resume=None):
                 break
             else:
                 error = result.get("error", "unknown")
+                # Gate 相关失败（verification_required / max_turns）会带上
+                # 候选回答 + footer，先展示实质回答再报错误，不让用户白等
+                reply = result.get("reply")
+                if reply:
+                    print_agent_reply(reply, THEME["warning"])
                 console.print(f"\n[{THEME['error']}]✗ 失败：{error}[/{THEME['error']}]\n")
 
             turn_separator()

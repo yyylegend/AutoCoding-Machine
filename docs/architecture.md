@@ -14,6 +14,7 @@ User input
   → Permission and Hook checks
   → ToolManager executes one tool
   → Tool result returns to the model
+  → CompletionGate checks post-change validation evidence
   → Final reply or next tool call
 ```
 
@@ -72,6 +73,35 @@ Coding Agent 的实现：系统提示词、LLM adapter、CLI、Plan Mode、沙�
 - 上下文超限（HTTP 400/413 且响应体含 context-length 关键词）抛领域异常，
   MachineLoop 强制压缩后**只重试一次**；压缩无进展或二次仍超限则明确失败，绝不无限循环。
 
+## 完成证据门
+
+`CompletionGate`（Coding Profile 专属，`src/profiles/coding/completion_gate.py`）
+不相信模型单独声明 done，只认两条硬证据：
+
+- **文件净变化**：`pre_tool` Hook 在写工具首次触碰路径前拍基线快照
+  （存在性 + SHA-256，分块计算）；`evaluate` 时重读全部跟踪路径与基线比较。
+  临时文件建了又删、文件改回原样都不算净变化；读取失败保守当作有变化。
+- **新鲜验证**：最后一次真实修改之后，`run_test` 成功或 token 级白名单命中的
+  `run_bash` 命令（pytest / lint / build 类）以退出码 0 完成。先测试后修改
+  属于过期证据；验证后再修改自动失效；消失的临时写入不影响已有验证。
+
+候选回答（candidate response）状态机：
+
+- 模型第一次给出无 ToolCall 的文本只是**候选回答**，与当时的有效修改版本绑定；
+- 证据不足时保留候选，插入运行时验证提示（synthetic nudge）继续循环；
+  nudge 和候选回答都是内部脚手架，**不写入 Session JSONL**；
+- 验证通过后复用原候选回答并附验证标记，模型的验证回执不得顶替实质内容；
+  期间发生新的真实净修改则旧候选作废，等待新候选；
+- 连续两次无证据返回 `verification_required`，但候选回答 + 未验证标记
+  照样交付；轮数耗尽同样交付 pending candidate，回答不丢失。
+
+流式展示两阶段提交：`StreamingAdapter` 依据 `should_publish_stream()` 决定
+正常流式渲染或静默缓冲（token 照收、不建持久面板）；`last_streamed` 只表示
+最终回答已持久展示。用户每个任务最多看到一份持久最终回答。
+
+`read_file` 支持 `start_line` / `end_line`（1-based，含端点）分页读取长文件，
+带真实行号和续读建议；长文件不再需要临时脚本。
+
 ## 关键设计选择
 
 1. **工具是模型唯一的副作用入口。** 所有文件和命令操作都经过 ToolManager。
@@ -80,3 +110,4 @@ Coding Agent 的实现：系统提示词、LLM adapter、CLI、Plan Mode、沙�
 3. **Profile 负责组合。** Engine 不依赖 Coding Agent，Coding Profile 在 Runtime seam 注册专属能力。
 4. **会话使用追加写。** JSONL 保留原始消息流水，压缩只影响运行时上下文。
 5. **安全默认拒绝。** 未注册工具、保护路径和异常检查不会静默放行。
+6. **完成需要证据。** 模型的 done 只是候选状态，文件净变化 + 新鲜验证才允许提交。

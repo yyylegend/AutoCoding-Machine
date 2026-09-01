@@ -11,8 +11,10 @@ from src.engine import (
     PermissionManager,
 )
 from src.config.settings import settings
+from src.profiles.coding.completion_gate import CompletionGate
 from src.profiles.coding.context_selector import ContextSelector
 from src.profiles.coding.context_setup import build_context_manager
+from src.profiles.coding.sandbox import WorkspaceSandbox
 from src.profiles.coding.system_prompt import get_system_prompt
 from src.profiles.coding.tools import CodingTools
 from src.profiles.coding.profile import CodingProfile, MarkdownMemoryExtension
@@ -28,6 +30,7 @@ def create_coding_runtime(
     session_store=None,
     context_manager=None,
     context_selector=None,
+    completion_gate=None,
     permission=None,
     guard=None,
     budget=None,
@@ -61,6 +64,16 @@ def create_coding_runtime(
             workspace=workspace,
             current_session_id=current_session_id,
         )
+    if completion_gate is None:
+        # 完成证据门是 Coding 专属策略，放 Coding Profile（见 docs/plans V2 计划）。
+        # 它需要沙箱来做路径规范化：优先复用工具集合里的那个。
+        sandbox = getattr(tools, "sandbox", None)
+        if not isinstance(sandbox, WorkspaceSandbox):
+            sandbox = WorkspaceSandbox(workspace)
+        completion_gate = CompletionGate(sandbox)
+    # 注册到两个 Hook：执行前拍基线快照，执行后记修改/验证版本
+    hooks.on("pre_tool", completion_gate.before_tool)
+    hooks.on("post_tool", completion_gate.after_tool)
     if budget is None:
         budget = BudgetPolicy(max_turns=settings.CODING_MAX_TURNS)
 
@@ -86,6 +99,7 @@ def create_coding_runtime(
         context_manager=context_manager,
         context_selector=context_selector,
         session_store=session_store,
+        completion_gate=completion_gate,
     )
     return AgentRuntime(
         system_prompt=get_system_prompt(str(workspace)),
@@ -98,6 +112,7 @@ def create_coding_runtime(
             "hooks": hooks,
             "context_manager": context_manager,
             "context_selector": context_selector,
+            "completion_gate": completion_gate,
             "session_store": session_store,
         },
     )

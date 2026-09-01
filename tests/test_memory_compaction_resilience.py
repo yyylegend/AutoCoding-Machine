@@ -557,7 +557,7 @@ class TestContextLengthDetection:
         adapter = StreamingAdapter([], Console(), {})
         plain_calls = []
 
-        def _overflow(_messages, _buffer):
+        def _overflow(_messages, _buffer, **_kwargs):
             raise ContextLengthExceededError("模拟流式超限")
 
         def _plain_call(*args, **kwargs):

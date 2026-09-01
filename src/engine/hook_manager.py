@@ -66,6 +66,9 @@ class HookManager:
       compaction_fallback — 压缩降级或恢复警告（kind, error, turn）。
                             kind=summary_fallback：摘要失败，改用确定性摘录；
                             kind=context_overflow_retry：上下文超限，强制压缩后重试一次
+      completion_rejected — 模型宣布完成但缺少修改后的验证证据
+                            （reason, changed_paths, candidate_version,
+                            validation_version, turn）
     """
 
     def __init__(self):

@@ -22,6 +22,7 @@ class AgentRuntime:
         self.hooks = components.get("hooks")
         self.context_manager = components.get("context_manager")
         self.context_selector = components.get("context_selector")
+        self.completion_gate = components.get("completion_gate")
         self.session_store = components.get("session_store")
 
     def build_messages(self, history, extra_injections=None):
@@ -35,7 +36,13 @@ class AgentRuntime:
         return assemble(self.system_prompt, history, dynamic_injections=injections)
 
     def run(self, messages, cancel):
-        """运行底层 MachineLoop。"""
+        """开始新用户任务：重置完成证据后运行底层 MachineLoop。"""
+        if self.completion_gate is not None:
+            self.completion_gate.start_task()
+        return self.loop.run(messages, cancel)
+
+    def resume(self, messages, cancel):
+        """恢复当前任务，不清空权限暂停前已经收集的完成证据。"""
         return self.loop.run(messages, cancel)
 
     def set_session_store(self, session_store):

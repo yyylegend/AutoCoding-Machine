@@ -71,6 +71,7 @@ class MachineLoop:
         context_manager=None,
         context_selector=None,
         session_store=None,
+        completion_gate=None,
     ):
         """初始化。
 
@@ -93,6 +94,10 @@ class MachineLoop:
                             传了的话，循环中产生的每条新消息
                             （助手回复 / 工具结果）都会同步写盘。
                             不传行为和以前完全一样。
+          completion_gate — 完成证据门，可选（CompletionGate 协议对象）。
+                            模型给出最终回答时调用其 evaluate(candidate) 做裁决：
+                            accept → 回答生效；continue → 退回验证；fail → 带未验证
+                            标记交付。不传则模型说 done 即完成，行为同旧版。
         """
         self.model_fn = model_fn
         self.tools = tools
@@ -104,6 +109,7 @@ class MachineLoop:
         self.context_manager = context_manager
         self.context_selector = context_selector
         self.session_store = session_store
+        self.completion_gate = completion_gate
 
     def _select_context(self, messages):
         """构造本次模型请求视图；原始 messages 始终保持不变。"""
@@ -242,7 +248,59 @@ class MachineLoop:
             # 第 3 步：没有 tool_calls，检查是否完成
             if not response.tool_calls:
                 # 只有明确 done 或 final_verifier 通过才算成功
-                if response.done or self.final_verifier(messages, response):
+                candidate_done = response.done or self.final_verifier(messages, response)
+
+                # ---- CompletionGate 判断：模型说 done 只是"候选回答" ----
+                # 有文件净变化就必须有新鲜的验证证据，否则退回去验证。
+                # 注意 candidate 为空的情况不进 Gate（EC-8），
+                # 按下面的 no_tool_call 失败处理。
+                if (
+                    candidate_done
+                    and self.completion_gate is not None
+                    and (response.content or "").strip()
+                ):
+                    decision = self.completion_gate.evaluate(response.content)
+
+                    if decision.action == "accept":
+                        # Gate 裁定的唯一最终回答。
+                        # 验证 continuation 之后会复用原候选回答（附验证 footer），
+                        # 模型的验证回执不允许顶替实质内容（FR-23）。
+                        reply = decision.final_response
+                        self._record({"role": "assistant", "content": reply})
+                        self.hooks.fire("done", reply=reply, turn=turn)
+                        return {"status": "success", "reply": reply}
+
+                    if decision.action == "fail":
+                        # 连续缺证据，停止重试——但候选回答 + 未验证标记照样交付，
+                        # 用户等来的实质回答不能凭空消失（FR-25）
+                        reply = decision.final_response
+                        self._record({"role": "assistant", "content": reply})
+                        self.hooks.fire("failed", error="verification_required", turn=turn)
+                        return {
+                            "status": "failed",
+                            "error": "verification_required",
+                            "reply": reply,
+                        }
+
+                    # action == "continue"：候选回答已存进 Gate，插入一条
+                    # 运行时验证提示，让模型先跑测试再回答。
+                    # 提示和候选回答都是内部脚手架，不写 JSONL（FR-22）。
+                    messages.append({
+                        "role": "user",
+                        "content": decision.continuation_message,
+                    })
+                    self.hooks.fire(
+                        "completion_rejected",
+                        reason=decision.reason,
+                        changed_paths=list(decision.changed_paths),
+                        candidate_version=decision.candidate_version,
+                        validation_version=decision.validation_version,
+                        turn=turn,
+                    )
+                    turn += 1
+                    continue
+
+                if candidate_done:
                     # 最终回复也要落盘，不然 resume 后少最后一句
                     # 注意：content 可能为空（流式已显示但未回填），此时用空字符串落盘
                     reply_content = response.content or ""
@@ -357,6 +415,13 @@ class MachineLoop:
 
             turn += 1
 
-        # 超过 max_turns
+        # 超过 max_turns。但若 Gate 里还存着候选回答，先交付它——
+        # 用户已经等来一版实质回答，不能只甩一个冷冰冰的 max_turns（FR-26）
+        if self.completion_gate is not None:
+            pending = self.completion_gate.take_pending_final()
+            if pending is not None:
+                self._record({"role": "assistant", "content": pending})
+                self.hooks.fire("failed", error="max_turns", turn=turn)
+                return {"status": "failed", "error": "max_turns", "reply": pending}
         self.hooks.fire("failed", error="max_turns", turn=turn)
         return {"status": "failed", "error": "max_turns"}

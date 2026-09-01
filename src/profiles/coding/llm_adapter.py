@@ -165,23 +165,30 @@ class StreamingAdapter(BaseCodingAdapter):
     对 MachineLoop 完全透明：仍然返回完整的 AgentResponse。
     """
 
-    def __init__(self, tools_schemas: list, console: Console, theme: dict):
+    def __init__(self, tools_schemas: list, console: Console, theme: dict,
+                 publish_gate=None):
         """初始化。
 
         参数：
           tools_schemas — 工具定义列表
           console       — rich Console 实例（用来渲染流式输出）
           theme         — THEME 颜色字典（用来给 Panel 上色）
+          publish_gate  — 可选的完成证据门（CompletionGate）。
+                          传了的话，每次调模型前问它 should_publish_stream()：
+                          门开着（有未验证修改 / 有候选在等验证）就静默缓冲，
+                          不创建持久回答面板；门关着才正常流式展示。
+                          不传 = 永远展示，行为同旧版。
         """
         super().__init__(tools_schemas)
         self.console = console
         self.theme = theme
+        self.publish_gate = publish_gate
 
         # 流式开关（测试时可以关掉）
         self.stream = True
 
         # 可观测指标（每轮任务前调 reset_metrics() 清零）
-        self.last_streamed = False        # 最后一次回复是否已流式渲染过
+        self.last_streamed = False        # 最终回答是否已持久展示给用户（静默缓冲的轮次不算）
         self.last_ttft_ms = None          # 最后一轮的首字延迟（毫秒）
         self.last_prompt_tokens = 0       # 最后一次调用的 prompt tokens（服务端精确值）
         self.total_prompt_tokens = 0      # 本任务累计输入 token
@@ -195,19 +202,37 @@ class StreamingAdapter(BaseCodingAdapter):
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
+    def _should_publish(self) -> bool:
+        """本轮回答该不该实时展示。
+
+        问完成证据门的 should_publish_stream()；没配门就永远展示。
+        """
+        if self.publish_gate is None:
+            return True
+        return self.publish_gate.should_publish_stream()
+
     def call(self, messages: list) -> AgentResponse:
         """调用 LLM（流式优先，失败回退非流式）。
 
-        流式时边生成边用 rich Live 增量渲染 Markdown 面板。
+        流式时分两种展示策略（由完成证据门决定）：
+          publish=True  — 边生成边用 rich Live 增量渲染 Markdown 面板；
+          publish=False — 静默缓冲（token 照收，面板不建）。
+                          因为这时候的回答大概率会被 Gate 打回去要求验证，
+                          先显示给用户，等会儿又显示"正式版"，一份回答看两遍。
+
         同时记录首字延迟和 token 消耗供状态栏显示。
         """
         self.last_streamed = False
+        publish = self._should_publish()   # 生成开始前先定展示策略
         buffer = []  # 累积流式 content 片段
 
         if self.stream:
             try:
-                result = self._call_streaming(messages, buffer)
-                self.last_streamed = bool(buffer)
+                result = self._call_streaming(messages, buffer, publish=publish)
+                # last_streamed 语义 = "最终回答已经持久展示"（FR-31）。
+                # 静默缓冲的轮次不算——那部分内容要么被 Gate 替换，
+                # 要么以正式版面目重新提交，不能让它误抑制最终展示。
+                self.last_streamed = publish and bool(buffer)
             except ContextLengthExceededError:
                 # 上下文超限必须交给 MachineLoop 先压缩再重试。
                 # 不能按普通流式故障直接拿同一批消息做非流式重发。
@@ -247,12 +272,13 @@ class StreamingAdapter(BaseCodingAdapter):
         # 用基类的共享逻辑解析结果
         return self._parse_result(result)
 
-    def _call_streaming(self, messages: list, buffer: list) -> dict:
-        """流式调用 + 终端实时渲染。
+    def _call_streaming(self, messages: list, buffer: list, publish: bool = True) -> dict:
+        """流式调用 + 终端渲染（或静默缓冲）。
 
         参数：
           messages — 消息列表
           buffer   — 用来累积 content 片段的列表（外部可读）
+          publish  — True 正常渲染面板；False 静默缓冲（不建持久面板）
 
         返回：
           chat_stream() 的完整结果 dict
@@ -267,15 +293,16 @@ class StreamingAdapter(BaseCodingAdapter):
         ) as live:
 
             def _on_token(piece: str):
-                """每收到一个 content 片段就更新面板。"""
+                """每收到一个 content 片段就更新面板（或只缓冲）。"""
                 buffer.append(piece)
-                live.update(Panel(
-                    Markdown("".join(buffer)),
-                    title="[bold]Agent[/bold]",
-                    title_align="left",
-                    border_style=theme["ai"],
-                    padding=(0, 1),
-                ))
+                if publish:
+                    live.update(Panel(
+                        Markdown("".join(buffer)),
+                        title="[bold]Agent[/bold]",
+                        title_align="left",
+                        border_style=theme["ai"],
+                        padding=(0, 1),
+                    ))
 
             result = chat_stream(
                 messages, tools=self.tools_schemas,
