@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from src.config.settings import settings
+from src.common.token_utils import get_token_count
 from src.engine import (
     MachineLoop,
     BudgetPolicy,
@@ -37,13 +38,14 @@ from src.engine import (
     new_session_id,
     open_session,
     repair_dangling_tool_results,
-    sessions_dir_for,
 )
-from src.profiles.coding.context_setup import build_context_manager, resolve_token_budget
+from src.runtime.context import build_context_manager
 from src.profiles.coding.completion_gate import CompletionGate
-from src.profiles.coding.system_prompt import get_system_prompt
-from src.profiles.coding.tools import CodingTools
-from src.runtime.factory import create_coding_runtime
+from src.runtime.factory import create_runtime
+from src.profiles.config import load_profile
+from src.runtime.tools import ProfileTools
+from src.runtime.context import profile_token_budget
+from src.runtime.state import migrate_legacy_coding_state
 from src.profiles.coding.commands.cost import handle_cost
 from src.profiles.coding.commands.help import handle_help
 from src.profiles.coding.commands.memory import handle_memory
@@ -51,13 +53,14 @@ from src.profiles.coding.commands.prompt import handle_prompt
 from src.profiles.coding.commands.sessions import handle_sessions
 from src.profiles.coding.commands.skills import handle_skills
 from src.profiles.coding.commands.status import handle_status
-from src.profiles.coding.skills import discover_skills, load_skill_content
+from src.runtime.skills import load_skill_content
 from src.profiles.coding.llm_adapter import StreamingAdapter
-from src.profiles.coding.cli_input import create_main_session, main_input, confirm_input
+from src.profiles.coding.cli_input import create_main_session, main_input, confirm_input, profile_choices
 from src.profiles.coding.cli_ui import (
     THEME,
     console,
     print_banner,
+    print_profiles,
     print_help,
     print_skills,
     print_sessions,
@@ -75,105 +78,7 @@ from src.profiles.coding.cli_ui import (
 # 上下文加载：指令文件（全局+项目）+ 技能发现
 # ============================================================
 
-_PROJECT_INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]  # 项目层候选文件名（主名在前，备胎在后）
-_MAX_GLOBAL_CHARS = 5000   # 全局层上限（个人偏好 + 人格设定，给足空间）
-_MAX_PROJECT_CHARS = 8000  # 项目层上限（团队约定，详细）
-
-# 注：上下文 token 预算的计算已统一收到 context_setup.py（单一真相源）
-
-
-def _truncate_at_section(text: str, limit: int) -> tuple:
-    """把文本截断到 limit 字符内，尽量在章节标题处切。
-
-    返回 (截断后的文本, 是否发生了截断)。
-    """
-    if len(text) <= limit:
-        return text, False
-    # 在 limit 之前找最后一个章节标题（# 或 ## 开头的行），从那里切
-    cut = text.rfind("\n#", 0, limit)
-    if cut > limit // 2:  # 至少保留一半内容，否则就硬切
-        return text[:cut].rstrip() + "\n\n（后续章节已省略）", True
-    return text[:limit], True
-
-
-def _global_instruction_paths() -> list:
-    """返回全局指令文件的候选路径（按优先级）。
-
-    兼容两个主流约定：
-      1. ~/.agents/AGENTS.md  — 新兴标准
-      2. ~/.claude/CLAUDE.md  — Claude Code 的主流约定
-    """
-    home = Path.home()
-    return [
-        home / ".agents" / "AGENTS.md",
-        home / ".claude" / "CLAUDE.md",
-    ]
-
-
-def _load_first_found(candidate_paths: list, cap: int):
-    """在候选路径里找第一个存在的文件，截断后返回。
-
-    返回：
-      找到：{"path": Path, "content": str, "truncated": bool}
-      没找到：None
-    """
-    for path in candidate_paths:
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        content, truncated = _truncate_at_section(text, cap)
-        return {"path": path, "content": content, "truncated": truncated}
-    return None
-
-
-def load_instructions(workspace: Path) -> dict:
-    """加载全局 + 项目两层指令文件。
-
-    规则：
-      - 层内：主备二选一（AGENTS.md 优先，没有才用 CLAUDE.md）
-      - 层间：全局 + 项目都加载，拼接（不是覆盖）
-
-    返回：
-      {"global": {...} 或 None, "project": {...} 或 None}
-    """
-    global_info = _load_first_found(_global_instruction_paths(), _MAX_GLOBAL_CHARS)
-    project_paths = [workspace / name for name in _PROJECT_INSTRUCTION_FILES]
-    project_info = _load_first_found(project_paths, _MAX_PROJECT_CHARS)
-    return {"global": global_info, "project": project_info}
-
-
-def build_injections(instructions: dict, skills: list) -> list:
-    """把指令文件（全局+项目）+ 技能清单组装成 dynamic_injections。"""
-    injections = []
-
-    # ---- 指令文件：全局 + 项目两层拼接 ----
-    parts = []
-    src_paths = []
-    g = instructions.get("global")
-    p = instructions.get("project")
-    if g:
-        parts.append("【全局约定】\n" + g["content"])
-        src_paths.append(str(g["path"]))
-    if p:
-        parts.append("【项目约定】\n" + p["content"])
-        src_paths.append(str(p["path"]))
-
-    if parts:
-        header = "以下是项目约定（已截取关键部分）。如需完整细节，用 read_file 读取原文件：\n"
-        header += "原文件路径：" + "、".join(src_paths) + "\n\n"
-        injections.append({"role": "system", "content": header + "\n\n".join(parts)})
-
-    # ---- 技能清单：只注入名字（极省 token）----
-    if skills:
-        names = ", ".join(s["name"] for s in skills)
-        injections.append({"role": "system", "content": (
-            f"你可以通过 search_skills 工具按关键词搜索技能（detail=\"full\" 可查看描述），"
-            f"找到后用 load_skill 加载完整说明。当前共 {len(skills)} 个可用技能：\n{names}"
-        )})
-    return injections
+from src.runtime.prompts import load_instructions, build_injections
 
 
 # ============================================================
@@ -181,7 +86,15 @@ def build_injections(instructions: dict, skills: list) -> list:
 # ============================================================
 
 
-def run_cli(resume=None):
+def run_cli(resume=None, profile="coding"):
+    """切换 Profile 时重建整套会话，避免递归调用和旧权限残留。"""
+    selected = load_profile(profile)
+    while selected is not None:
+        selected = _run_profile(resume=resume, profile=selected)
+        resume = None  # 配置切换始终开新会话，旧对话仍保存在原 Profile 中。
+
+
+def _run_profile(resume, profile):
     """运行 CLI 主循环。
 
     参数：
@@ -190,17 +103,21 @@ def run_cli(resume=None):
     print_banner()
 
     # 初始化 Tokenizer（根据 .env 模型名，单一真相源在 context_setup.init_coding_tokenizer）
-    from src.profiles.coding.context_setup import init_coding_tokenizer
+    from src.runtime.context import init_coding_tokenizer
     init_coding_tokenizer()
 
     # ---- Session：新开或恢复（对话历史的唯一真相源，见 ADR-0001）----
     workspace = Path.cwd()
-    store, history, error = open_session(sessions_dir_for(workspace), resume)
+    migrated = migrate_legacy_coding_state(workspace)
+    if migrated:
+        console.print(f"[{THEME['dim']}]✓ 已整理 {len(migrated)} 个旧 Coding 状态文件[/{THEME['dim']}]")
+    session_dir = profile.state_dir(workspace) / "sessions"
+    store, history, error = open_session(session_dir, resume)
     if error:
         console.print(f"[{THEME['error']}]{error}[/{THEME['error']}]")
         return
 
-    tools = CodingTools(workspace, max_output_chars=2000)
+    tools = ProfileTools(workspace, profile, max_output_chars=2000)
     # 把 ToolManager 传给权限管理器：优先读各工具 @tool 声明的权限，
     # 不传的话新工具（memory / search_skills 等）会被硬编码白名单 DENY
     permission = PermissionManager(tool_manager=tools.get_manager())
@@ -208,22 +125,24 @@ def run_cli(resume=None):
 
     # 完成证据门：先建好，同时给 LLM 适配器（决定流式展示策略）
     # 和 Runtime（裁决任务能否完成）用，两边必须是同一个实例
-    completion_gate = CompletionGate(tools.sandbox)
+    completion_gate = CompletionGate(tools.sandbox) if profile.verify_changes else None
 
     # LLM 适配器（流式版，传 console 和 THEME 给它做终端渲染）
     llm = StreamingAdapter(tools.get_schemas(), console, THEME,
-                           publish_gate=completion_gate)
+                           publish_gate=completion_gate, model=profile.model)
 
     # 上下文管理器：统一从 context_setup 构造（只看 token 预算 + 摘要，见 ADR-0003）
-    token_budget = resolve_token_budget()
-    context_mgr = build_context_manager(token_budget=token_budget)
+    token_budget = profile_token_budget(profile)
+    context_mgr = build_context_manager(token_budget=token_budget, model=profile.model)
     budget = BudgetPolicy(max_turns=settings.CODING_MAX_TURNS)
     hooks = HookManager()
     register_cli_hooks(hooks)
 
     # 指令文件 + 技能发现，作为 Runtime 的基础注入快照。
-    instructions = load_instructions(workspace)
-    skills = discover_skills(workspace)
+    instructions = load_instructions(workspace) if profile.load_instructions else {"global": None, "project": None}
+    skills = tools.sandbox.skills
+    if "load_skill" not in profile.tools:
+        skills = []
     base_injections = build_injections(instructions, skills)
 
     # Plan Mode 状态（运行时切换）
@@ -231,7 +150,8 @@ def run_cli(resume=None):
     plan_injection = None   # Plan Mode 注入的 system 消息（/plan 时加入，/exit 时移除）
 
     # Runtime 统一组装记忆、工具、权限、上下文和 MachineLoop。
-    runtime = create_coding_runtime(
+    runtime = create_runtime(
+        profile=profile,
         workspace=workspace,
         model_fn=llm.call,
         tools=tools,
@@ -264,9 +184,9 @@ def run_cli(resume=None):
     messages = build_messages(history)
     memory_injection = next((item for item in injections if "MEMORY" in item.get("content", "")), None)
 
-    # 启动信息
+    # 启动信息：保留原来的完整 Banner 和状态提示，Profile 只补充一行。
     console.print(f"[{THEME['success']}]✓ Agent 已就绪[/{THEME['success']}]  "
-                  f"[{THEME['dim']}]模型: {llm.model}[/{THEME['dim']}]")
+                  f"[{THEME['dim']}]Profile: {profile.name} · 模型: {llm.model}[/{THEME['dim']}]")
     console.print(f"[{THEME['dim']}]✓ 上下文预算: {token_budget} tokens[/{THEME['dim']}]")
     if history:
         console.print(f"[{THEME['success']}]✓ 已恢复会话 {store.session_id}（{len(history)} 条历史消息）[/{THEME['success']}]")
@@ -283,17 +203,21 @@ def run_cli(resume=None):
     if skills:
         console.print(f"[{THEME['dim']}]✓ 发现 {len(skills)} 个技能（/skills 查看）[/{THEME['dim']}]")
     if memory_injection:
-        console.print(f"[{THEME['dim']}]✓ 已加载长期记忆（.autocoding/MEMORY.md + ~/.autocoding/USER.md）[/{THEME['dim']}]")
+        console.print(f"[{THEME['dim']}]✓ 已加载当前 Profile 的长期记忆（/memory 查看）[/{THEME['dim']}]")
     print_help()
 
     # resume 时把之前的对话回放到屏幕上（模型能看到，人也得能看到）
     print_history_replay(history)
 
     # prompt_toolkit 会话（上下键历史 + 斜杠命令菜单 + 参数补全 + Alt+Enter 多行）
+    input_status = {}  # 每次进入输入前更新，避免按键重绘时重复计算长上下文。
     prompt_session = create_main_session(
         workspace,
         skills=skills,
-        get_sessions=lambda: list_sessions(sessions_dir_for(workspace)),
+        get_sessions=lambda: list_sessions(session_dir),
+        state_dir=profile.state_dir(workspace),
+        profiles=profile_choices(workspace),
+        get_status=lambda: input_status,
     )
 
     # 进程内的对话视图状态（不落盘，不违反 ADR-0002）
@@ -309,12 +233,33 @@ def run_cli(resume=None):
     # REPL 循环
     while True:
         try:
+            input_status.update(profile=profile.name, model=llm.model, plan_mode=plan_mode,
+                                tokens=get_token_count(messages), budget=token_budget)
             user_input = main_input(prompt_session, plan_mode)
             user_input = user_input.strip()
             interrupted_once = False
 
             if not user_input:
                 continue
+
+            # 只有输入空闲时才处理切换；执行中的任务仍先使用 Ctrl+C 取消。
+            if user_input == "/profile":
+                print_profiles(profile_choices(workspace), profile.name)
+                continue
+            if user_input.startswith("/profile "):
+                target = user_input[len("/profile "):].strip().strip('"')
+                try:
+                    selected = load_profile(target)
+                    # 在离开原会话前检查预算配置，错误时仍留在当前 Profile。
+                    profile_token_budget(selected)
+                except (ValueError, OSError) as exc:
+                    console.print(str(exc), style=THEME["error"], markup=False)
+                    continue
+                if selected == profile:
+                    console.print("已经在使用这套配置。", style=THEME["dim"])
+                    continue
+                console.print(f"切换至 {selected.name} · 开启新会话，旧会话已保留。", style=THEME["accent"], markup=False)
+                return selected
 
             # ---- 命令分发 ----
             if user_input in ("/quit", "/exit"):
@@ -332,6 +277,9 @@ def run_cli(resume=None):
 
             # ---- /plan：进入 Plan Mode（只读 + 结构化计划）----
             if user_input == "/plan":
+                if profile.kind != "coding":
+                    console.print("当前 Profile 不使用 Coding Plan Mode。")
+                    continue
                 if plan_mode:
                     console.print(f"[{THEME['dim']}]已经在 Plan Mode 了[/{THEME['dim']}]")
                     continue
@@ -357,7 +305,7 @@ def run_cli(resume=None):
 
             if user_input == "/sessions":
                 runtime.registry.run_command("/sessions", {
-                    "sessions": list_sessions(sessions_dir_for(workspace)),
+                    "sessions": list_sessions(session_dir),
                     "current_id": store.session_id,
                 })
                 continue
@@ -367,10 +315,10 @@ def run_cli(resume=None):
                 target = user_input[len("/resume"):].strip()
                 if not target:
                     # 不带 id：先列出会话，教一下用法
-                    print_sessions(list_sessions(sessions_dir_for(workspace)), store.session_id)
+                    print_sessions(list_sessions(session_dir), store.session_id)
                     console.print(f"[{THEME['dim']}]用法：/resume <id>（输入时 Tab 可补全 id）[/{THEME['dim']}]\n")
                     continue
-                new_store, new_history, switch_error = open_session(sessions_dir_for(workspace), target)
+                new_store, new_history, switch_error = open_session(session_dir, target)
                 if switch_error:
                     console.print(f"[{THEME['error']}]{switch_error}[/{THEME['error']}]\n")
                     continue
@@ -417,6 +365,7 @@ def run_cli(resume=None):
                     "history": history,
                     "tools": tools,
                     "plan_mode": plan_mode,
+                    "profile": profile.name,
                 })
                 continue
 
@@ -431,7 +380,7 @@ def run_cli(resume=None):
 
             # ---- 已迁移命令：交给 Runtime Registry ----
             if user_input == "/memory":
-                runtime.registry.run_command("/memory", {"workspace": workspace})
+                runtime.registry.run_command("/memory", {"workspace": workspace, "manager": tools.sandbox.memory_manager})
                 continue
 
             # ---- /clear：清屏 + 重置对话（JSONL 保留）----
@@ -600,7 +549,8 @@ def run_cli(resume=None):
                 console.print_exception(show_locals=False)
 
 
-if __name__ == "__main__":
+def main():
+    """共享命令行入口；新旧启动命令都走这里。"""
     import argparse
 
     parser = argparse.ArgumentParser(description="Coding Agent CLI")
@@ -612,5 +562,13 @@ if __name__ == "__main__":
         "--resume", nargs="?", const="", default=None, metavar="SESSION_ID",
         help="恢复会话：不带值恢复最近一次，带值恢复指定 id（/sessions 可查）",
     )
+    parser.add_argument("--profile", default="coding", help="coding / review / companion 或自定义 YAML 路径")
     args = parser.parse_args()
-    run_cli(resume=args.resume)
+    try:
+        run_cli(resume=args.resume, profile=args.profile)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+
+if __name__ == "__main__":
+    main()

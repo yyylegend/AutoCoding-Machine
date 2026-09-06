@@ -67,12 +67,7 @@ THEME = {
 def print_banner():
     """打印欢迎 Banner。
 
-    两套方案自动切换：
-      - 宽终端（>= 86 列）：大字 ASCII Logo + 逐行渐变色（炫酷版）
-      - 窄终端：紧凑 Panel（不破版）
-
-    Logo 是开发时用 pyfiglet（ansi_shadow 字体）生成后贴进来的字符串常量，
-    运行时不依赖 pyfiglet，也不会有手写 ASCII 画对不齐的问题。
+    宽终端显示渐变 Logo，窄终端自动使用紧凑 Panel，避免破版。
     """
     if console.width >= 86:
         _print_big_banner()
@@ -80,7 +75,6 @@ def print_banner():
         _print_compact_banner()
 
 
-# 大字 Logo（pyfiglet ansi_shadow 字体生成，最宽 82 列）
 _LOGO_LINES = [
     " █████╗ ██╗   ██╗████████╗ ██████╗  ██████╗ ██████╗ ██████╗ ██╗███╗   ██╗ ██████╗ ",
     "██╔══██╗██║   ██║╚══██╔══╝██╔═══██╗██╔════╝██╔═══██╗██╔══██╗██║████╗  ██║██╔════╝ ",
@@ -96,7 +90,6 @@ _LOGO_LINES = [
     "╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝",
 ]
 
-# 逐行渐变色：青 → 蓝 → 紫 → 品红（12 行 Logo 对应 12 个颜色）
 _LOGO_COLORS = [
     "#00e5ff", "#00c8ff", "#00aaff", "#3d8bff", "#6a6aff", "#8a4fff",
     "#9a3fef", "#aa33d9", "#c02bbf", "#d424a4", "#e91e8c", "#ff1477",
@@ -107,7 +100,6 @@ def _print_big_banner():
     """宽终端：大字 Logo + 渐变色 + 信息行。"""
     console.print()
     for line, color in zip(_LOGO_LINES, _LOGO_COLORS):
-        # no_wrap：临界宽度下宁可裁剪也不折行（折行会把 Logo 彻底打乱）
         console.print(Text(line, style=f"bold {color}", no_wrap=True), justify="center")
 
     subtitle = Text()
@@ -151,6 +143,25 @@ def _print_compact_banner():
     console.print()
 
 
+def print_session_header(profile, model, workspace, budget, skill_count, resumed=False):
+    console.print(Text(f"  {profile}  /  {model or '未设置模型'}", style=THEME["dim"]))
+    console.print(Text(f"  {workspace}", style=THEME["dim"]))
+    console.print(Text(f"  {'恢复会话' if resumed else '新会话'} · 输入预算 {budget:,} · Skills {skill_count}", style=THEME["dim"]))
+    console.print(Text("  /profile 切换配置   /help 全部命令", style=THEME["dim"]))
+    console.print()
+
+
+def print_profiles(choices, current):
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style=THEME["accent"])
+    table.add_column()
+    for item in choices:
+        table.add_row("● " + item["name"] if item["name"] == current else item["name"], Text(item["value"]))
+    console.print(Text(f"当前配置 · {current}", style=f"bold {THEME['primary']}"))
+    console.print(table)
+    console.print(Text("/profile <名称或 YAML 路径> · 切换时开新会话，旧对话保留", style=THEME["dim"]))
+
+
 # ============================================================
 # Help / 技能清单 / 调试
 # ============================================================
@@ -162,6 +173,7 @@ def print_help():
     table.add_column(style=f"bold {THEME['accent']}", no_wrap=True)
     table.add_column(style="default")
 
+    table.add_row("/profile <配置>", "切换配置；不带参数查看清单，Tab 补全")
     table.add_row("/plan", "进入 Plan Mode（只读，产出结构化计划；/exit 退出）")
     table.add_row("/help", "显示帮助")
     table.add_row("/status", "当前状态（模式/模型/会话/token/上下文占比）")
@@ -229,7 +241,7 @@ def print_sessions(sessions: list, current_id: str):
     console.print(Panel(
         table,
         title=f"[bold]历史会话 · {len(sessions)} 个[/bold]",
-        subtitle="[dim]恢复：退出后用 --resume <id> 重新启动[/dim]",
+        subtitle="[dim]/resume <id> 恢复当前 Profile 的会话[/dim]",
         title_align="left",
         border_style=THEME["dim"],
         padding=(1, 1),
@@ -426,18 +438,11 @@ def register_cli_hooks(hooks: HookManager):
     """
 
     def on_pre_tool(**kw):
-        """工具开始执行：卡片显示工具名 + 参数（rich Panel）。
-
-        格式：
-          ┌─ ⏺ read_file ────────────────┐
-          │ path: src/engine/contracts.py  │
-          │ max_chars: 2000                │
-          └────────────────────────────────┘
-        """
+        """工具开始执行：卡片显示工具名 + 参数（rich Panel）。"""
         tool_name = kw.get("tool_name", "?")
         arguments = kw.get("arguments") or {}
 
-        # 参数渲染成一行一个 key: value（比一行摘要好读）
+        # 参数渲染成一行一个 key: value，方便确认模型到底要做什么
         body_lines = []
         for key, value in arguments.items():
             text = str(value).replace("\n", " ").replace("\r", "")

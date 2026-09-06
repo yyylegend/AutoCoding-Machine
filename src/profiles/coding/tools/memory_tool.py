@@ -32,6 +32,7 @@ from pathlib import Path
 from src.config.settings import settings
 from src.engine.contracts import ToolCall, ToolResult
 from src.engine.memory_manager import MemoryManager
+from src.runtime.memory import create_memory_manager
 from src.engine.tool_manager import tool
 from src.profiles.coding.sandbox import WorkspaceSandbox
 from src.profiles.coding.tools.helpers import (
@@ -67,13 +68,7 @@ def get_memory_manager(workspace) -> MemoryManager:
     谁调用：
       本文件的 execute()，以及 Runtime Profile 的启动注入。
     """
-    ws = Path(workspace).resolve()
-    return MemoryManager(
-        memory_path=ws / ".autocoding" / "MEMORY.md",
-        user_path=_user_memory_path(),
-        memory_limit=settings.MEMORY_CHAR_LIMIT,
-        user_limit=settings.USER_CHAR_LIMIT,
-    )
+    return create_memory_manager(workspace, user_path=_user_memory_path())
 
 
 def build_memory_injection(workspace):
@@ -149,7 +144,9 @@ def execute(
         return invalid_result(tool_call, action + " 需要 'old_text' 参数（定位旧条目的唯一子串）")
 
     # ---- 分发到 MemoryManager ----
-    manager = get_memory_manager(sandbox.workspace)
+    manager = getattr(sandbox, "memory_manager", None)
+    if manager is None:
+        manager = get_memory_manager(sandbox.workspace)
     try:
         if action == "add":
             result = manager.add(target, content)

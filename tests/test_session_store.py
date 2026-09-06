@@ -295,7 +295,7 @@ class TestContextManagerWiring(unittest.TestCase):
     """
 
     def setUp(self):
-        from src.profiles.coding import context_setup
+        from src.runtime import context as context_setup
         self.context_setup = context_setup
         # 预填缓存，避免测试发真实网络请求
         context_setup._budget_cache = 99999
@@ -339,7 +339,7 @@ class TestContextBudgetResolution(unittest.TestCase):
 
     def setUp(self):
         from src.config.settings import settings
-        from src.profiles.coding import context_setup
+        from src.runtime import context as context_setup
 
         self.settings = settings
         self.context_setup = context_setup

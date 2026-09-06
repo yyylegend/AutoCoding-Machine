@@ -18,7 +18,7 @@
 
 【权限来源（优先级）】
   1. 传入 tool_manager 时：先读工具 @tool 装饰器声明的权限
-  2. 拿不到（未注册 / 没传 tool_manager）：回落到 tool_defaults 硬编码表
+  2. 未注册：拒绝；没传 tool_manager：沿用 tool_defaults 默认表
   3. 表里也没有：DENY
 
 【谁会用】
@@ -58,7 +58,7 @@ class PermissionManager:
         self.auto_approve = auto_approve
         self.plan_mode = plan_mode
 
-        # 工具默认权限（fallback 表：没有 tool_manager 或工具未注册时用）
+        # 工具默认权限（fallback 表：没有 tool_manager 时用）
         self.tool_defaults = {
             # 只读工具：绿灯，直接执行
             "read_file": PermissionDecision.AUTO,
@@ -115,7 +115,7 @@ class PermissionManager:
         优先级：工具装饰器声明（含按参数的动态权限）> tool_defaults 表 > DENY。
         """
         # 优先问 ToolManager：工具自己用 @tool 装饰器声明的权限最准
-        # 只在工具确实注册过时采信；未注册时回落到硬编码表，
+        # 只在工具确实注册过时采信；未注册时拒绝，
         # 保证老用法（不传 tool_manager）行为完全不变
         if self.tool_manager is not None and self.tool_manager.is_registered(name):
             # 传 tool_call 让工具能按参数区分权限（如 memory: add 自动 / remove 确认）
@@ -127,7 +127,11 @@ class PermissionManager:
                 return PermissionDecision.ASK
             return PermissionDecision.DENY
 
-        # 查表
+        # 有注册表时它就是唯一能力清单；不能从旧默认表重新放行被 Profile 排除的工具。
+        if self.tool_manager is not None:
+            return PermissionDecision.DENY
+
+        # 无注册表的旧调用方仍沿用默认表。
         decision = self.tool_defaults.get(name)
         if decision is not None:
             return decision

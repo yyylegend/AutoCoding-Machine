@@ -18,7 +18,7 @@
 from src.engine.contracts import ToolCall, ToolResult
 from src.engine.tool_manager import tool
 from src.profiles.coding.sandbox import WorkspaceSandbox
-from src.profiles.coding.skills import discover_skills, load_skill_content
+from src.runtime.skills import discover_skills, load_skill_content
 from src.profiles.coding.tools.helpers import (
     get_str_arg,
     invalid_result,
@@ -50,7 +50,9 @@ def execute(
 
     # ---- 第二步：扫描技能目录，拿到当前可用的技能清单 ----
     # sandbox.workspace 是项目根目录，用来定位项目级技能目录
-    skills = discover_skills(sandbox.workspace)
+    skills = getattr(sandbox, "skills", None)
+    if skills is None:
+        skills = discover_skills(sandbox.workspace)
 
     # ---- 第三步：按名字加载技能正文 ----
     content = load_skill_content(skills, name)

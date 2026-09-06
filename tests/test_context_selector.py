@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from src.engine import AgentResponse, BudgetPolicy, CancellationToken, MachineLoop
 from src.engine.session_store import SessionStore, sessions_dir_for
-from src.profiles.coding.context_selector import ContextSelector
+from src.runtime.context_selector import ContextSelector
 from src.runtime.factory import create_coding_runtime
 
 
@@ -90,7 +90,7 @@ def test_selector_failure_does_not_block_agent_request(tmp_path):
     selector = ContextSelector(tmp_path)
 
     with patch(
-        "src.profiles.coding.context_selector.search_history",
+        "src.runtime.context_selector.search_history",
         side_effect=OSError("history unavailable"),
     ):
         selected = selector.select(messages)
@@ -149,7 +149,7 @@ def test_selector_reuses_result_for_same_user_message(tmp_path):
     }
 
     with patch(
-        "src.profiles.coding.context_selector.search_history",
+        "src.runtime.context_selector.search_history",
         return_value=result,
     ) as search:
         first = selector.select(messages)

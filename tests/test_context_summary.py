@@ -18,7 +18,7 @@ import unittest
 # 导入需要测试的函数和类
 from src.config.settings import settings
 from src.engine.context_manager import ContextManager, assemble
-from src.profiles.coding.context_setup import make_summarizer
+from src.runtime.context import make_summarizer
 
 
 class TestContextSummary(unittest.TestCase):

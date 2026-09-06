@@ -18,6 +18,7 @@ class RuntimeContext:
 
     workspace: Any
     profile: str = "coding"
+    memory_manager: Any = None
 
 
 class RuntimeRegistry:

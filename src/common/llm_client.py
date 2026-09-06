@@ -133,7 +133,7 @@ def chat(messages, tools=None, tool_choice="auto", timeout=None,
     # - tools:LLM 可以调的工具列表(像菜单)
     # - tool_choice:"auto" 让 LLM 自己决定调不调,"required" 强制它必须调一个
     # 老调用方不传 tools 时,这段被跳过,行为跟以前完全一样
-    if tools is not None:
+    if tools:
         payload["tools"] = tools
         # 项目当前只有一个 agent_action 工具。把 required 转成 named choice，
         # 让 vLLM 直接按该函数的 JSON Schema 约束输出；相比 required，
@@ -300,7 +300,7 @@ def chat_stream(messages, tools=None, tool_choice="auto", timeout=None,
         # 让服务端在最后一个 chunk 带上 usage（vLLM / OpenAI 都支持）
         "stream_options": {"include_usage": True},
     }
-    if tools is not None:
+    if tools:
         payload["tools"] = tools
         function_name = tools[0].get("function", {}).get("name") if len(tools) == 1 else None
         if tool_choice == "required" and function_name:

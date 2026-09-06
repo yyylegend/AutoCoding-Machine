@@ -24,6 +24,7 @@ class AgentRuntime:
         self.context_selector = components.get("context_selector")
         self.completion_gate = components.get("completion_gate")
         self.session_store = components.get("session_store")
+        self.trace = components.get("trace")
 
     def build_messages(self, history, extra_injections=None):
         """按统一顺序组装消息。
@@ -49,6 +50,8 @@ class AgentRuntime:
         """切换当前 Session，并同步 Loop 与自动上下文选择器。"""
         self.session_store = session_store
         self.loop.session_store = session_store
+        if self.trace is not None:
+            self.trace.set_session(session_store)
         if self.context_selector is not None:
             update_session = getattr(self.context_selector, "set_current_session", None)
             if update_session is not None:

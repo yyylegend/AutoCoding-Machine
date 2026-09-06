@@ -12,7 +12,8 @@
   追加写天然抗崩溃：哪怕写到一半断电，前面的行都还在。
 
 【设计约定】（见 docs/adr/0001、0002）
-  - 一次 Session 一个文件：.autocoding/sessions/<session_id>.jsonl
+  - 运行时的一次 Session 一个文件：.autocoding/profiles/<profile>/sessions/<session_id>.jsonl
+  - `sessions_dir_for()` 保留旧的默认路径，给旧调用方和低层测试使用；Profile 入口会传入自己的目录
   - 只存原始 history（user / assistant / tool 消息），
     不存 system prompt、不存 injections、不存 compact 摘要
   - 本模块是消息历史的唯一真相源
@@ -35,7 +36,7 @@ from filelock import FileLock  # ★ 新增：文件级互斥锁
 from src.engine.contracts import ToolResult
 
 
-# session 文件统一放在这个子目录（相对某个工作区）
+# 旧版默认路径。新的 Profile 运行时会显式传入 .autocoding/profiles/<name>/sessions。
 SESSIONS_DIR_NAME = ".autocoding/sessions"
 
 
@@ -219,6 +220,10 @@ def open_session(sessions_dir, resume):
       只依赖本模块的 SessionStore / new_session_id / latest_session_id，
       不碰终端、不碰全局状态，测试可以直接喂临时目录验证。
     """
+    # 会话 id 只能是文件名，避免 /resume 越过当前 Profile 的目录。
+    if resume and ("/" in resume or "\\" in resume or ":" in resume or resume in (".", "..")):
+        return None, None, "会话 id 不能包含路径；请用 /sessions 中的 id"
+
     if resume is None:
         # 新开会话：生成新 id，history 从空开始
         store = SessionStore(sessions_dir, new_session_id())

@@ -100,6 +100,8 @@ class AgentResponse:
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     done: bool = False
+    # 服务端报告的用量只供诊断，to_message() 不会把它放回模型上下文。
+    usage: dict[str, Any] = field(default_factory=dict)
 
     def to_message(self) -> dict[str, Any]:
         """转成 OpenAI-compatible assistant message。

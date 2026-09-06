@@ -9,8 +9,9 @@ from src.profiles.coding.tools.memory_tool import _user_memory_path
 def handle_memory(context):
     """显示项目和用户长期记忆文件。"""
     workspace = context["workspace"]
-    project_mem = workspace / ".autocoding" / "MEMORY.md"
-    user_mem = _user_memory_path()
+    manager = context.get("manager")
+    project_mem = manager.memory_path if manager is not None else workspace / ".autocoding" / "MEMORY.md"
+    user_mem = manager.user_path if manager is not None else _user_memory_path()
     for label, path in [("MEMORY.md（项目）", project_mem), ("USER.md（用户）", user_mem)]:
         if path.is_file():
             content = path.read_text(encoding="utf-8").strip()

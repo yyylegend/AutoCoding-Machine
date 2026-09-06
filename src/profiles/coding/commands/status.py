@@ -1,6 +1,8 @@
 """/status 命令。"""
 
 from src.engine.context_manager import count_tokens
+from rich.table import Table
+from rich.text import Text
 
 
 def handle_status(context):
@@ -23,13 +25,19 @@ def handle_status(context):
     tools = context["tools"]
     plan_mode = context["plan_mode"]
 
-    console.print(f"\n[{theme['dim']}]╭─ 状态 ─────────────────────────────────╮[/{theme['dim']}]")
-    console.print(f"[{theme['dim']}]│[/{theme['dim']}] 模式:     {'PLAN MODE' if plan_mode else '普通'}")
-    console.print(f"[{theme['dim']}]│[/{theme['dim']}] 模型:     {llm.model}")
-    console.print(f"[{theme['dim']}]│[/{theme['dim']}] 会话:     {store.session_id}")
-    console.print(f"[{theme['dim']}]│[/{theme['dim']}] 历史:     {len(history)} 条消息")
-    console.print(f"[{theme['dim']}]│[/{theme['dim']}] Token:    ↑{llm.total_prompt_tokens} ↓{llm.total_completion_tokens}")
-    console.print(f"[{theme['dim']}]│[/{theme['dim']}] 上下文:   {ctx_tokens}/{token_budget} ({pct}%)")
-    console.print(f"[{theme['dim']}]│[/{theme['dim']}] 工具:     {len(tools.get_schemas())} 个已注册")
-    console.print(f"[{theme['dim']}]╰──────────────────────────────────────╯[/{theme['dim']}]\n")
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style=theme["dim"])
+    table.add_column()
+    for label, value in [
+        ("Profile", context.get("profile", "coding")),
+        ("模式", "PLAN" if plan_mode else "普通"),
+        ("模型", llm.model),
+        ("会话", store.session_id),
+        ("历史", f"{len(history)} 条消息"),
+        ("用量", f"↑{llm.total_prompt_tokens} ↓{llm.total_completion_tokens}"),
+        ("上下文", f"约 {ctx_tokens}/{token_budget} ({pct}%)"),
+        ("工具", f"{len(tools.get_schemas())} 个已注册"),
+    ]:
+        table.add_row(label, Text(str(value)))
+    console.print(table)
     return True

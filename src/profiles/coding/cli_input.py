@@ -2,7 +2,7 @@
 
 【这文件是干什么的】
   把原生 input() 替换成 prompt_toolkit，获得这些能力：
-    1. 上下键翻历史（跨会话保留，存在 .autocoding/input_history）
+    1. 上下键翻历史（跨会话保留，存在当前 Profile 的 input_history）
     2. 斜杠命令菜单：输入 / 自动弹出命令选择菜单（右边带说明列）
     3. 命令参数补全：/skill 后补技能名、/resume 后补会话 id
     4. 多行编辑（Alt+Enter 换行，Enter 发送）
@@ -24,6 +24,8 @@ from prompt_toolkit import HTML, PromptSession, prompt
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.styles import Style
+from src.profiles.config import BUILTINS, load_profile
 
 
 # =====================================
@@ -32,6 +34,7 @@ from prompt_toolkit.key_binding import KeyBindings
 
 # 带参数的命令结尾留一个空格：选中后光标落在参数区，立刻进入参数补全
 _COMMANDS_WITH_HELP = [
+    ("/profile ", "切换配置（不带参数查看清单）"),
     ("/plan", "进入 Plan Mode（只读，产出结构化计划）"),
     ("/help", "显示帮助"),
     ("/status", "当前状态（模式/模型/会话/token/上下文占比）"),
@@ -63,7 +66,7 @@ class SlashCompleter(Completer):
     其它情况（普通聊天文字）不提供补全，菜单不会弹出来。
     """
 
-    def __init__(self, skills: list, get_sessions):
+    def __init__(self, skills: list, get_sessions, profiles=None):
         """初始化。
 
         参数：
@@ -73,6 +76,7 @@ class SlashCompleter(Completer):
                          （会话会变，每次现查，内部带 TTL 缓存）
         """
         self.skills = skills
+        self.profiles = profiles or []
         self.get_sessions = get_sessions
         self._sessions_cache = None
         self._sessions_cache_at = 0.0
@@ -91,6 +95,13 @@ class SlashCompleter(Completer):
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
+
+        if text.startswith("/profile "):
+            fragment = text[len("/profile "):]
+            for item in self.profiles:
+                if item["value"].startswith(fragment):
+                    yield Completion(item["value"], start_position=-len(fragment), display_meta=item["name"])
+            return
 
         # ---- /resume <片段>：补会话 id ----
         if text.startswith("/resume "):
@@ -147,11 +158,37 @@ def _make_bindings() -> KeyBindings:
 # 主输入（带历史 + 命令菜单 + 参数补全 + 多行）
 # =====================================
 
-def create_main_session(workspace: Path, skills: list = None, get_sessions=None) -> PromptSession:
+def profile_choices(workspace):
+    """清单与补全共用；只扫描约定目录，坏配置不阻断输入。"""
+    choices = [{"value": name, "name": name} for name in BUILTINS]
+    # 用户配置放在仓库根目录的 profile_configs；src/profiles 是程序源码。
+    for path in sorted((Path(workspace) / "profile_configs").glob("*.y*ml")):
+        try:
+            profile = load_profile(str(path))
+        except (ValueError, OSError):
+            continue
+        choices.append({"value": path.relative_to(workspace).as_posix(), "name": profile.name})
+    return choices
+
+
+def status_fragments(status):
+    """使用纯文本片段而非 HTML 插值，模型名中的特殊字符不会破坏显示。"""
+    budget = status.get("budget", 0)
+    pct = int(status.get("tokens", 0) / budget * 100) if budget else 0
+    return [
+        ("class:status.profile", f" {status.get('profile', 'coding')} "),
+        ("class:status", f" · {status.get('model') or '未设置模型'} · 上下文约 {pct}%"),
+        ("class:status", " · PLAN" if status.get("plan_mode") else ""),
+        ("class:status", "  |  / 命令 · Alt+Enter 换行"),
+    ]
+
+
+def create_main_session(workspace: Path, skills: list = None, get_sessions=None, *,
+                        state_dir=None, profiles=None, get_status=None) -> PromptSession:
     """创建主输入的 PromptSession（整个 CLI 生命周期共用一个）。
 
     参数：
-      workspace    - 项目根目录（历史文件放在 .autocoding/ 下）
+      workspace    - 项目根目录（历史文件放在传入的 Profile 状态目录下）
       skills       - 技能清单（/skill 补全用；不传就只补命令）
       get_sessions - 返回会话清单的函数（/resume 补全用；不传则该项不补全）
 
@@ -162,12 +199,12 @@ def create_main_session(workspace: Path, skills: list = None, get_sessions=None)
       complete_while_typing=True：输入 / 就自动弹出命令选择菜单，
       不用先按 Tab（Tab 手动触发补全也仍然可用）。
     """
-    # 历史文件：.autocoding/input_history
-    history_dir = workspace / ".autocoding"
+    # 历史文件：.autocoding/profiles/<profile>/input_history
+    history_dir = state_dir if state_dir is not None else workspace / ".autocoding"
     history_dir.mkdir(parents=True, exist_ok=True)
     history_path = history_dir / "input_history"
 
-    completer = SlashCompleter(skills or [], get_sessions or (lambda: []))
+    completer = SlashCompleter(skills or [], get_sessions or (lambda: []), profiles)
 
     return PromptSession(
         history=FileHistory(str(history_path)),
@@ -175,6 +212,16 @@ def create_main_session(workspace: Path, skills: list = None, get_sessions=None)
         key_bindings=_make_bindings(),
         multiline=False,             # 默认单行，Alt+Enter 手动换行
         complete_while_typing=True,  # 输入 / 自动弹命令菜单
+        bottom_toolbar=(lambda: status_fragments(get_status())) if get_status else None,
+        style=Style.from_dict({
+            "bottom-toolbar": "noreverse",
+            "status": "#888888 noreverse",
+            "status.profile": "#d4a574 bold noreverse",
+            "completion-menu.completion": "bg:#262626 #d4d4d4",
+            "completion-menu.completion.current": "bg:#45403a #ffdab3 bold",
+            "completion-menu.meta.completion": "bg:#262626 #aaaaaa",
+            "completion-menu.meta.completion.current": "bg:#45403a #ffdab3",
+        }),
     )
 
 

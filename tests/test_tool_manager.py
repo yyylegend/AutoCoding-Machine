@@ -169,10 +169,10 @@ class TestPermissionManagerWithToolManager(unittest.TestCase):
         self.assertEqual(perm.check(self._call("read_file")), PermissionDecision.AUTO)
         self.assertEqual(perm.check(self._call("write_file")), PermissionDecision.ASK)
 
-    def test_unregistered_falls_back_to_defaults(self):
-        # grep 没注册进 manager，但硬编码表里有 -> 回落到表，仍是 AUTO
+    def test_unregistered_tool_is_denied(self):
+        # 注册表是能力边界：即使旧默认表里有 grep，也不能放行。
         perm = PermissionManager(tool_manager=self.manager)
-        self.assertEqual(perm.check(self._call("grep")), PermissionDecision.AUTO)
+        self.assertEqual(perm.check(self._call("grep")), PermissionDecision.DENY)
         # 哪儿都没有的工具 -> DENY
         self.assertEqual(perm.check(self._call("rm_rf")), PermissionDecision.DENY)
 

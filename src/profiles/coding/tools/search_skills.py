@@ -22,7 +22,7 @@
 from src.engine.contracts import ToolCall, ToolResult
 from src.engine.tool_manager import tool
 from src.profiles.coding.sandbox import WorkspaceSandbox
-from src.profiles.coding.skills import discover_skills
+from src.runtime.skills import discover_skills
 from src.profiles.coding.tools.helpers import (
     get_str_arg,
     ok_result,
@@ -60,7 +60,17 @@ def execute(
 
     # ---- 第二步：拿到全部技能清单 ----
     # sandbox.workspace 是项目根目录，用来定位项目级技能目录
-    skills = discover_skills(sandbox.workspace)
+    skills = getattr(sandbox, "skills", None)
+    if skills is None:
+        skills = discover_skills(sandbox.workspace)
+
+    # 空清单与关键词不匹配是两回事，不能让模型靠换关键词重试。
+    if not skills:
+        return ok_result(
+            tool_call,
+            "当前 Profile 没有可用技能（可能未启用，或未发现技能）。重复搜索不会获得结果。",
+            {"count": 0},
+        )
 
     # ---- 第三步：按关键词过滤（在代码里做，不花 token）----
     # query 为空 → 不过滤，返回全部
