@@ -10,3 +10,5 @@ __pycache__/
 .vscode/
 # Archify 浏览器检查生成的本地截图和报告；保留正式 HTML 与 JSON 源文件。
 docs/diagrams/*.visual-check.*
+# 面试讲解稿只留本地，不随项目文档发布。
+docs/diagrams/interview-script.md
