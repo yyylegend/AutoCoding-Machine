@@ -85,7 +85,8 @@ class StreamingAdapter(BaseCodingAdapter):
         # 可观测指标（每轮任务前调 reset_metrics() 清零）
         self.last_streamed = False        # 最终回答是否已持久展示给用户（静默缓冲的轮次不算）
         self.last_ttft_ms = None          # 最后一轮的首字延迟（毫秒）
-        self.last_prompt_tokens = 0       # 最后一次调用的 prompt tokens（服务端精确值）
+        self.last_prompt_tokens = None    # 服务端报告值；None 表示尚无数据
+        self.usage_complete = True        # 任一成功响应缺少用量时，累计值仅为已报告部分
         self.total_prompt_tokens = 0      # 本任务累计输入 token
         self.total_completion_tokens = 0  # 本任务累计输出 token
 
@@ -93,7 +94,8 @@ class StreamingAdapter(BaseCodingAdapter):
         """每轮用户任务开始前调用，清零可观测指标。"""
         self.last_streamed = False
         self.last_ttft_ms = None
-        self.last_prompt_tokens = 0
+        self.last_prompt_tokens = None
+        self.usage_complete = True
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
@@ -216,8 +218,15 @@ class StreamingAdapter(BaseCodingAdapter):
     def _update_metrics(self, result: dict):
         """从返回结果里提取可观测指标。"""
         usage = result.get("usage") or {}
-        self.last_prompt_tokens = usage.get("prompt_tokens") or 0
-        self.total_prompt_tokens += usage.get("prompt_tokens") or 0
-        self.total_completion_tokens += usage.get("completion_tokens") or 0
+        prompt = usage.get("prompt_tokens")
+        completion = usage.get("completion_tokens")
+        # 0 是有效报告；缺失、负数或错误类型不能伪装成零消耗。
+        prompt = prompt if type(prompt) is int and prompt >= 0 else None
+        completion = completion if type(completion) is int and completion >= 0 else None
+        self.last_prompt_tokens = prompt
+        if prompt is None or completion is None:
+            self.usage_complete = False
+        self.total_prompt_tokens += prompt or 0
+        self.total_completion_tokens += completion or 0
         if result.get("ttft_ms") is not None:
             self.last_ttft_ms = result["ttft_ms"]

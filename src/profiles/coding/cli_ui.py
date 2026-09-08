@@ -250,7 +250,7 @@ def print_sessions(sessions: list, current_id: str):
 
 def print_prompt_debug(messages: list):
     """显示当前会发给 LLM 的消息结构（/prompt 命令用）。"""
-    from src.engine.context_manager import count_tokens
+    from src.common.token_utils import get_token_count
 
     total_tokens = count_tokens(messages)
     console.print(f"\n[{THEME['dim']}]共 {len(messages)} 条消息 · 约 {total_tokens} token[/{THEME['dim']}]")
@@ -298,14 +298,19 @@ def print_status_bar(llm, messages: list, token_budget: int):
     # token 消耗
     if llm.total_prompt_tokens or llm.total_completion_tokens:
         parts.append(f"↑{llm.total_prompt_tokens} ↓{llm.total_completion_tokens}")
+    if not getattr(llm, "usage_complete", True):
+        parts.append("用量报告不完整")
+    if llm.last_prompt_tokens is not None:
+        parts.append(f"上次输入 {llm.last_prompt_tokens}（服务端）")
 
     # 上下文压力（进度条 + 数值）
-    ctx_tokens = llm.last_prompt_tokens or count_tokens(messages)
+    # 上次请求用量不等于当前上下文，回复与工具结果可能已经追加进来了。
+    ctx_tokens = get_token_count(messages, llm.model, tools=llm.tools_schemas)
     if token_budget > 0:
-        pct = min(int(ctx_tokens / token_budget * 100), 100)
-        filled = int(pct / 5)  # 20 格进度条
+        pct = int(ctx_tokens / token_budget * 100)
+        filled = min(int(pct / 5), 20)  # 条形封顶，但数值保留超预算的真实比例
         bar = "█" * filled + "░" * (20 - filled)
-        parts.append(f"ctx {bar} {ctx_tokens}/{token_budget} ({pct}%)")
+        parts.append(f"输入估算 {bar} {ctx_tokens}/{token_budget} ({pct}%)")
 
     if parts:
         console.print(f"[{THEME['dim']}]  {' · '.join(parts)}[/{THEME['dim']}]")

@@ -164,7 +164,8 @@ def test_cli_selects_profile_and_runs_without_real_model(tmp_path, monkeypatch, 
     from src.profiles.coding import cli, llm_adapter
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "profile_token_budget", lambda _: 10000)
+    monkeypatch.setattr(cli, "profile_token_budget", lambda _, **kwargs: 10000)
+    monkeypatch.setattr(cli, "resolve_context_info", lambda _: {"window": None, "source": "未知"})
     monkeypatch.setattr(cli, "create_main_session", lambda *args, **kwargs: None)
     inputs = iter(["你好", "/memory", "/quit"])
     monkeypatch.setattr(cli, "main_input", lambda *args: next(inputs))

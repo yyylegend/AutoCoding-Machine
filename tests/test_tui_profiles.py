@@ -46,7 +46,8 @@ def test_switch_rebuilds_runtime_and_keeps_old_history(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
-    monkeypatch.setattr(cli, "profile_token_budget", lambda _: 10000)
+    monkeypatch.setattr(cli, "profile_token_budget", lambda _, **kwargs: 10000)
+    monkeypatch.setattr(cli, "resolve_context_info", lambda _: {"window": None, "source": "未知"})
     sessions = []
     monkeypatch.setattr(cli, "create_main_session", lambda *args, **kwargs: sessions.append(kwargs))
     inputs = iter(["coding private", "/plan", "/profile companion", "companion private",

@@ -177,7 +177,7 @@ def status_fragments(status):
     pct = int(status.get("tokens", 0) / budget * 100) if budget else 0
     return [
         ("class:status.profile", f" {status.get('profile', 'coding')} "),
-        ("class:status", f" · {status.get('model') or '未设置模型'} · 上下文约 {pct}%"),
+        ("class:status", f" · {status.get('model') or '未设置模型'} · 输入预算约 {pct}%"),
         ("class:status", " · PLAN" if status.get("plan_mode") else ""),
         ("class:status", "  |  / 命令 · Alt+Enter 换行"),
     ]

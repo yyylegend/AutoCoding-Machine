@@ -1,7 +1,7 @@
 """上下文管理器：组装 + 压缩。
 
 【作用】
-  token_utils → 精确 token 计数；
+  token_utils → 请求前 token 估算；
   context_manager → assemble + compact（安全切分点）。
 
 【这文件是干什么的】
@@ -143,7 +143,7 @@ class ContextManager:
         response = model_fn(messages)
     """
 
-    def __init__(self, max_messages: int | None = 20, max_tokens: int | None = None, summarizer_fn=None):
+    def __init__(self, max_messages: int | None = 20, max_tokens: int | None = None, summarizer_fn=None, *, token_counter=None, tool_tokens=0):
         """初始化。
 
         参数：
@@ -172,6 +172,9 @@ class ContextManager:
         """
         self.max_messages = max_messages
         self.max_tokens = max_tokens
+        # 每个运行时固定自己的计数器；工具开销每次请求只计算一次。
+        self.count_tokens = token_counter or count_tokens
+        self.tool_tokens = tool_tokens
         self.summarizer_fn = summarizer_fn
         # 摘要的进程内缓存：旧消息指纹 → 摘要文本。
         # 为什么需要：compact 结果不落盘（ADR-0002），CLI 每轮从 JSONL
@@ -190,6 +193,10 @@ class ContextManager:
         self.last_compaction_mode = "none"
         self.last_compaction_error = None   # 摘要失败时的错误描述
         self.last_dropped_count = 0         # 本次压缩丢掉的消息数
+
+    def count_request_tokens(self, messages: list) -> int:
+        """估算消息加工具定义的输入占用，供压缩和溢出恢复共用。"""
+        return self.count_tokens(messages) + self.tool_tokens
 
     def maybe_compact(self, messages: list, force: bool = False) -> list:
         """如果消息太多，就安全截断（四步流程）。
@@ -235,7 +242,7 @@ class ContextManager:
             over_tokens = True
         else:
             over_count = self.max_messages is not None and len(messages) > self.max_messages
-            over_tokens = self.max_tokens is not None and count_tokens(messages) > self.max_tokens
+            over_tokens = self.max_tokens is not None and self.count_request_tokens(messages) > self.max_tokens
             if not over_count and not over_tokens:
                 return messages
 
@@ -260,15 +267,15 @@ class ContextManager:
             # 为什么不能直接用满预算：没超限时全部消息都塞得下，永远切不出东西。
             if self.max_tokens is None:
                 return messages  # 没有 token 预算概念，无法收紧，不动
-            system_tokens = count_tokens(system_prefix)
-            budget = max(int(self.max_tokens * 0.3) - system_tokens - 200, 0)
+            system_tokens = self.count_tokens(system_prefix)
+            budget = max(int(self.max_tokens * 0.3) - system_tokens - self.tool_tokens - 200, 0)
             cut_start = self._token_budget_cut(rest, budget)
             if cut_start <= 0:
                 return messages  # 对话太短，30% 预算也全塞得下，没什么可压
         elif self.max_tokens is not None and over_tokens:
             # token 预算模式：给 system 和摘要留出余地后，剩余预算给近期消息
-            system_tokens = count_tokens(system_prefix)
-            budget = max(self.max_tokens - system_tokens - 200, 0)  # 200 预留给摘要消息
+            system_tokens = self.count_tokens(system_prefix)
+            budget = max(self.max_tokens - system_tokens - self.tool_tokens - 200, 0)  # 200 预留给摘要消息
             cut_start = self._token_budget_cut(rest, budget)
         else:
             # 消息数模式（原有逻辑）
@@ -471,7 +478,7 @@ class ContextManager:
         total = 0
         keep_start = len(messages)
         for i in range(len(messages) - 1, -1, -1):
-            msg_tokens = count_tokens([messages[i]])
+            msg_tokens = self.count_tokens([messages[i]])
             # 再加就超了，且已经至少保留了一条 → 停
             if total + msg_tokens > budget and keep_start < len(messages):
                 break

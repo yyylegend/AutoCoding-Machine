@@ -39,13 +39,35 @@ load_instructions: true
 | `tools` | 可选，只能从该类型已有工具中选择；省略则沿用默认工具。`review` 无法借此启用 Shell |
 | `skills` | `null` 使用全部已发现 Skills；`[]` 不加载；名称列表只启用指定 Skills。省略则沿用该类型默认值 |
 | `model` | 可选，覆盖当前 Profile 的模型 ID，主调用与摘要使用相同模型；连接地址和密钥继续从 `.env` 读取 |
-| `context_budget` | 可选，输入 token 预算；不是模型完整窗口。请为最大输出和消息封装留出空间 |
+| `context_budget` | 可选，输入 token 预算（含工具定义估算）；不是模型完整窗口，也不会自动验证服务端是否支持该长度。请为最大输出和消息封装留出空间 |
 | `load_instructions` | 是否读取全局和项目的 AGENTS.md / CLAUDE.md；Companion 默认关闭 |
 | `trace_enabled` | 是否保存详细运行轨迹；默认 `false`。开启会额外生成 `runs/`，适合评测和排查问题 |
 
 Skills 从 `~/.agents/skills/` 和 `<workspace>/.agents/skills/` 发现，项目级同名覆盖全局级。Profile 组装时筛选清单，搜索和加载工具共用该清单；修改技能目录后重新启动。修改自定义 YAML 后可用 `/profile <路径>` 重新加载变化后的配置。要让模型加载 Skills，需启用 `load_skill` 工具。
 
 当前清单为空时（包括 `skills: []` 或没有发现技能），运行时不注册 `search_skills` 和 `load_skill`，模型看不到这两个入口，也不能执行它们。有可用技能且配置允许时才注册。旧调用入口遇到空清单会说明当前没有可用技能，不再提示换关键词重试。“当前未启用”不等于电脑上没安装技能；加载 Skill 也不会新增文件或命令权限。
+
+## Token 用量与模型窗口
+
+这三个数字用途不同：
+
+| 数字 | 从哪里来 | 怎么理解 |
+| --- | --- | --- |
+| 当前输入估算 | 本地 tokenizer 对消息与工具定义计数，并估算封装开销 | 用于压缩和输入预算占比，不是精确用量；尚未包含下一条用户输入和之后的临时召回 |
+| 上次请求输入 / 本次任务已报告用量 | 服务端响应的 `usage` | 服务端报告值；缺失显示未知或不完整，不用本地估算补成实际消耗 |
+| 模型窗口 | 显式配置或服务端元数据 | 输入和输出可用空间的依据；与当前输入预算分开展示 |
+
+已知模型使用 tiktoken 官方编码映射，GPT-4o 使用 `o200k_base`；GLM、Qwen 等未被识别的模型使用通用回退，`/status` 会标明。接口兼容 OpenAI 不代表 tokenizer 相同；即使编码正确，服务端聊天模板也会影响完整请求长度。当前不支持任意模型的精确请求前计数，也不精确估算图片或音频输入。
+
+窗口优先级：默认模型使用 `CODING_CONTEXT_LENGTH` 显式配置，否则查询 `/models` 中与当前模型 ID 完全匹配的 `max_model_len`、`context_length` 或 `max_context_length`。识别到 llama.cpp 的 `meta.n_ctx_train` 时，只将它作为服务类型线索，另查询 `/props?model=…` 的 `default_generation_settings.n_ctx`，不用训练窗口冒充部署窗口。
+
+服务端没提供、接口不支持或查询失败时，窗口显示“未知”。为兼容旧行为，未指定输入预算时仍按 128,000 token 假设计算回退预算，并明确标记；这个假设不保证适合当前模型，需按部署配置核对。供应商元数据也可能受代理层影响，不能承诺所有兼容接口都能自动识别。
+
+Profile 覆盖成不同模型时，不套用默认模型的手动窗口。切换或重启时重新解析，单个运行时固定自己的模型计数器；界面重绘不会反复请求模型元数据。`/status` 查看的是本次启动时的窗口快照。
+
+自动预算最多占窗口的 80%，同时预留最大输出和 1024 token 余量。显式 `context_budget` 优先，填写者负责核对。`/cost` 在下一次用户任务开始时清零；统计不包含摘要请求，也不代表整个聊天会话或账户账单。
+
+实现依据：[tiktoken 官方映射](https://github.com/openai/tiktoken/blob/main/tiktoken/model.py)、[llama.cpp 服务接口](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)。
 
 ### 记忆与会话位置
 

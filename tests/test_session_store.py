@@ -297,11 +297,11 @@ class TestContextManagerWiring(unittest.TestCase):
     def setUp(self):
         from src.runtime import context as context_setup
         self.context_setup = context_setup
-        # 预填缓存，避免测试发真实网络请求
-        context_setup._budget_cache = 99999
-
-    def tearDown(self):
-        self.context_setup._budget_cache = None
+        # 替换预算解析入口，避免测试发真实网络请求。
+        from unittest.mock import patch
+        budget_patch = patch.object(context_setup, "resolve_token_budget", return_value=99999)
+        budget_patch.start()
+        self.addCleanup(budget_patch.stop)
 
     def test_has_both_token_budget_and_summarizer(self):
         """摘要开关开启时：max_tokens 和 summarizer_fn 都不为空。"""
@@ -345,12 +345,10 @@ class TestContextBudgetResolution(unittest.TestCase):
         self.context_setup = context_setup
         self.original_context_length = settings.CODING_CONTEXT_LENGTH
         self.original_max_output = settings.CODING_LLM_MAX_TOKENS
-        context_setup._budget_cache = None
 
     def tearDown(self):
         self.settings.CODING_CONTEXT_LENGTH = self.original_context_length
         self.settings.CODING_LLM_MAX_TOKENS = self.original_max_output
-        self.context_setup._budget_cache = None
 
     def test_explicit_context_length_has_highest_priority(self):
         from unittest.mock import patch

@@ -137,10 +137,11 @@ class MachineLoop:
         # 先量一次压缩前的 token 数，用来判断"压缩到底有没有进展"
         if request_messages is None:
             request_messages = self._select_context(messages)
-        tokens_before = count_tokens(request_messages)
+        request_counter = getattr(self.context_manager, "count_request_tokens", count_tokens)
+        tokens_before = request_counter(request_messages)
         compacted = self.context_manager.maybe_compact(messages, force=True)
         retry_messages = self._select_context(compacted)
-        tokens_after = count_tokens(retry_messages)
+        tokens_after = request_counter(retry_messages)
 
         if tokens_after >= tokens_before:
             self.hooks.fire("failed", error="context_overflow", turn=turn)

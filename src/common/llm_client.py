@@ -220,6 +220,13 @@ def chat(messages, tools=None, tool_choice="auto", timeout=None,
     }
 
 
+def _positive_context_length(value):
+    """只接受正整数或整数字符串，避免把 true、浮点数当成窗口。"""
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        value = int(value)
+    return value if type(value) is int and value > 0 else None
+
+
 def fetch_model_context_window(base_url=None, api_key=None, auth_type=None, model=None):
     """从 LLM 供应商 API 查询模型的上下文窗口大小。
 
@@ -232,7 +239,7 @@ def fetch_model_context_window(base_url=None, api_key=None, auth_type=None, mode
     返回：
       int（上下文窗口 token 数）或 None（查询失败 / 供应商不返回）
     """
-    _base_url = base_url or settings.LLM_BASE_URL
+    _base_url = (base_url or settings.LLM_BASE_URL).rstrip("/")
     _api_key = api_key or settings.LLM_API_KEY
     _auth_type = (auth_type or settings.LLM_AUTH_TYPE).lower()
 
@@ -249,13 +256,21 @@ def fetch_model_context_window(base_url=None, api_key=None, auth_type=None, mode
         for m in resp.json().get("data", []):
             if m.get("id") == target:
                 for field in ("max_model_len", "context_length", "max_context_length"):
-                    value = m.get(field)
-                    try:
-                        value = int(value)
-                    except (TypeError, ValueError):
-                        continue
-                    if value > 0:
+                    value = _positive_context_length(m.get(field))
+                    if value is not None:
                         return value
+                # llama.cpp 的训练窗口不是当前部署窗口。仅在识别到该元数据
+                # 且模型 ID 匹配时查询 /props，并带模型参数兼容 router 模式。
+                meta = m.get("meta")
+                if isinstance(meta, dict) and "n_ctx_train" in meta:
+                    server_url = _base_url.removesuffix("/v1")
+                    props = requests.get(f"{server_url}/props", headers=headers,
+                                         params={"model": target}, timeout=10)
+                    if props.ok:
+                        return _positive_context_length(
+                            props.json().get("default_generation_settings", {}).get("n_ctx")
+                        )
+                return None
     except Exception:
         return None
     return None

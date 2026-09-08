@@ -6,7 +6,7 @@
     - make_summarizer()            — 造摘要函数（带开关）
     - resolve_context_length()     — 解析模型的完整上下文窗口
     - calculate_token_budget()     — 从窗口算安全输入预算
-    - resolve_token_budget()       — 按优先级解析并缓存最终预算
+    - resolve_token_budget()       — 按优先级解析最终预算
     - build_context_manager()      — 一步到位，两边都调这个
 
   以后想改压缩配置，天下只有这一个地方可改。
@@ -16,12 +16,12 @@
 """
 
 from src.common.llm_client import chat, fetch_model_context_window
-from src.common.token_utils import init_tokenizer
+from src.common.token_utils import init_tokenizer, get_token_count, count_tool_tokens
 from src.config.settings import settings
 from src.engine import ContextManager
 
 
-# 供应商 API 查不到窗口大小时使用的保守默认窗口。
+# 查询失败时仅用于兼容旧预算策略，不能当作已探测的模型窗口。
 DEFAULT_CONTEXT_LENGTH = 128000
 
 # 输入最多使用完整窗口的 80%，避免上下文长期顶格运行。
@@ -29,12 +29,6 @@ BUDGET_RATIO = 0.8
 
 # 除模型最大输出外，再留少量空间给消息封装和不同 tokenizer 的估算误差。
 TOKEN_SAFETY_MARGIN = 1024
-
-# resolve_token_budget() 的进程内缓存：
-# 多次构造 ContextManager 时复用模型上下文窗口查询结果。
-# 模型窗口在进程生命周期内不会变，问一次就够。
-_budget_cache = None
-
 
 # ============================================================
 # 工具：初始化 tokenizer
@@ -132,26 +126,26 @@ def make_summarizer(model=None):
     return summarize
 
 
-def resolve_context_length() -> int:
-    """按优先级解析模型的完整上下文窗口。
-
-    优先级：
-      1. CODING_CONTEXT_LENGTH 显式配置；
-      2. 供应商 /models 返回的模型元数据；
-      3. DEFAULT_CONTEXT_LENGTH 保守默认值。
-    """
-    if settings.CODING_CONTEXT_LENGTH is not None:
+def resolve_context_info(model=None) -> dict:
+    """返回窗口及来源；未知时不伪装成 128K，覆盖模型不套用默认配置。"""
+    model = model or settings.CODING_LLM_MODEL
+    if model == settings.CODING_LLM_MODEL and settings.CODING_CONTEXT_LENGTH is not None:
         if settings.CODING_CONTEXT_LENGTH <= 0:
             raise ValueError("CODING_CONTEXT_LENGTH 必须是正整数")
-        return settings.CODING_CONTEXT_LENGTH
+        return {"window": settings.CODING_CONTEXT_LENGTH, "source": "手动配置"}
 
     detected = fetch_model_context_window(
         base_url=settings.CODING_LLM_BASE_URL,
         api_key=settings.CODING_LLM_API_KEY,
         auth_type=settings.CODING_LLM_AUTH_TYPE,
-        model=settings.CODING_LLM_MODEL,
+        model=model,
     )
-    return detected or DEFAULT_CONTEXT_LENGTH
+    return {"window": detected, "source": "服务端报告" if detected else "未知"}
+
+
+def resolve_context_length() -> int:
+    """兼容旧调用；未知时使用预算假设，界面应读取 resolve_context_info。"""
+    return resolve_context_info()["window"] or DEFAULT_CONTEXT_LENGTH
 
 
 def calculate_token_budget(context_length: int, max_output_tokens: int) -> int:
@@ -170,24 +164,15 @@ def calculate_token_budget(context_length: int, max_output_tokens: int) -> int:
 
 
 def resolve_token_budget() -> int:
-    """解析并缓存上下文输入预算（进程内只计算一次）。
-
-    返回：
-      int，token 预算
-    """
-    global _budget_cache
-    if _budget_cache is not None:
-        return _budget_cache
-
+    """运行时创建时解析预算，不跨模型和配置变更复用旧值。"""
     context_length = resolve_context_length()
-    _budget_cache = calculate_token_budget(
+    return calculate_token_budget(
         context_length=context_length,
         max_output_tokens=settings.CODING_LLM_MAX_TOKENS,
     )
-    return _budget_cache
 
 
-def build_context_manager(max_messages: int | None = None, token_budget: int | None = None, *, model=None) -> ContextManager:
+def build_context_manager(max_messages: int | None = None, token_budget: int | None = None, *, model=None, tools=None) -> ContextManager:
     """构造配置齐全的 ContextManager（token 预算 + 历史摘要都开）。
 
     参数：
@@ -204,22 +189,25 @@ def build_context_manager(max_messages: int | None = None, token_budget: int | N
         context_mgr = build_context_manager()
     """
     if token_budget is None:
-        token_budget = resolve_token_budget()
+        if model is None:
+            token_budget = resolve_token_budget()
+        else:
+            length = resolve_context_info(model)["window"] or DEFAULT_CONTEXT_LENGTH
+            token_budget = calculate_token_budget(length, settings.CODING_LLM_MAX_TOKENS)
+    model = model or settings.CODING_LLM_MODEL
     return ContextManager(
         max_messages=max_messages,
         max_tokens=token_budget,
         summarizer_fn=make_summarizer(model=model),
+        token_counter=lambda messages: get_token_count(messages, model),
+        tool_tokens=count_tool_tokens(tools, model),
     )
 
 
-def profile_token_budget(profile):
-    """显式输入预算优先；切换模型时单独查询，不污染默认模型缓存。"""
+def profile_token_budget(profile, *, context_info=None):
+    """显式输入预算优先；调用方可复用启动时已查询的窗口信息。"""
     if profile.context_budget is not None:
         return profile.context_budget
-    if profile.model is None:
-        return resolve_token_budget()
-    length = fetch_model_context_window(
-        base_url=settings.CODING_LLM_BASE_URL, api_key=settings.CODING_LLM_API_KEY,
-        auth_type=settings.CODING_LLM_AUTH_TYPE, model=profile.model,
-    ) or DEFAULT_CONTEXT_LENGTH
+    info = context_info if context_info is not None else resolve_context_info(profile.model)
+    length = info["window"] or DEFAULT_CONTEXT_LENGTH
     return calculate_token_budget(length, settings.CODING_LLM_MAX_TOKENS)

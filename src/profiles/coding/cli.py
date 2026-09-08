@@ -22,7 +22,6 @@ import time
 from pathlib import Path
 
 from src.config.settings import settings
-from src.common.token_utils import get_token_count
 from src.engine import (
     MachineLoop,
     BudgetPolicy,
@@ -44,7 +43,7 @@ from src.profiles.coding.completion_gate import CompletionGate
 from src.runtime.factory import create_runtime
 from src.profiles.config import load_profile
 from src.runtime.tools import ProfileTools
-from src.runtime.context import profile_token_budget
+from src.runtime.context import profile_token_budget, resolve_context_info
 from src.runtime.state import migrate_legacy_coding_state
 from src.profiles.coding.commands.cost import handle_cost
 from src.profiles.coding.commands.help import handle_help
@@ -132,8 +131,13 @@ def _run_profile(resume, profile):
                            publish_gate=completion_gate, model=profile.model)
 
     # 上下文管理器：统一从 context_setup 构造（只看 token 预算 + 摘要，见 ADR-0003）
-    token_budget = profile_token_budget(profile)
-    context_mgr = build_context_manager(token_budget=token_budget, model=profile.model)
+    context_info = resolve_context_info(profile.model)
+    token_budget = profile_token_budget(profile, context_info=context_info)
+    budget_source = "Profile 显式设置" if profile.context_budget is not None else (
+        "由窗口预留输出后计算" if context_info["window"] else "按 128K 假设回退，需核对部署配置"
+    )
+    context_mgr = build_context_manager(token_budget=token_budget, model=profile.model,
+                                        tools=tools.get_schemas())
     budget = BudgetPolicy(max_turns=settings.CODING_MAX_TURNS)
     hooks = HookManager()
     register_cli_hooks(hooks)
@@ -234,7 +238,7 @@ def _run_profile(resume, profile):
     while True:
         try:
             input_status.update(profile=profile.name, model=llm.model, plan_mode=plan_mode,
-                                tokens=get_token_count(messages), budget=token_budget)
+                                tokens=context_mgr.count_request_tokens(messages), budget=token_budget)
             user_input = main_input(prompt_session, plan_mode)
             user_input = user_input.strip()
             interrupted_once = False
@@ -358,6 +362,8 @@ def _run_profile(resume, profile):
                 runtime.registry.run_command("/status", {
                     "messages": messages,
                     "token_budget": token_budget,
+                    "context_info": context_info,
+                    "budget_source": budget_source,
                     "console": console,
                     "theme": THEME,
                     "llm": llm,
@@ -396,10 +402,9 @@ def _run_profile(resume, profile):
 
             # ---- /compact：手动压缩（带确认）----
             if user_input == "/compact":
-                from src.engine.context_manager import count_tokens
-                ctx_tokens = count_tokens(messages)
+                ctx_tokens = context_mgr.count_request_tokens(messages)
                 pct = int(ctx_tokens / token_budget * 100) if token_budget > 0 else 0
-                console.print(f"[{THEME['dim']}]  当前上下文: {ctx_tokens}/{token_budget} ({pct}%)[/{THEME['dim']}]")
+                console.print(f"[{THEME['dim']}]  当前输入估算: {ctx_tokens}/{token_budget} ({pct}%)[/{THEME['dim']}]")
                 try:
                     confirm = confirm_input("  确定压缩？回车确认，输入 n 取消 > ").strip().lower()
                 except (EOFError, KeyboardInterrupt):
@@ -414,7 +419,7 @@ def _run_profile(resume, profile):
                         base_count = len(store.load())
                         history = base_view[:]  # 压缩后还没有新消息，视图就是全部
                         messages = build_messages(history)
-                        new_tokens = count_tokens(messages)
+                        new_tokens = context_mgr.count_request_tokens(messages)
                         console.print(f"[{THEME['success']}]  ✓ 已压缩：{before_count} → {len(base_view)} 条（约 {new_tokens} token）[/{THEME['success']}]")
                     else:
                         console.print(f"[{THEME['dim']}]  当前无需压缩（对话太短）[/{THEME['dim']}]")

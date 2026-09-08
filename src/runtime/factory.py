@@ -63,7 +63,8 @@ def create_runtime(
     if guard is None:
         guard = GuardManager()
     if context_manager is None:
-        context_manager = build_context_manager(token_budget=profile_token_budget(profile), model=profile.model)
+        context_manager = build_context_manager(token_budget=profile_token_budget(profile),
+                                                model=profile.model, tools=tools.get_schemas())
     if context_selector is None:
         current_session_id = getattr(session_store, "session_id", None)
         context_selector = ContextSelector(
