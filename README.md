@@ -52,7 +52,9 @@ uv run python -m src
 
 启动时所在的目录就是它处理文件的工作区。进入界面后直接打字即可：**Enter 发送，Alt+Enter 换行**。
 
-宽终端会显示渐变色 Logo，窄终端会自动换成紧凑面板；工具调用显示参数卡片，助手回复使用 Markdown 面板。输入区底部会显示当前 Profile、模型和上下文占比。
+宽终端会显示渐变色 Logo，窄终端会自动换成紧凑面板；工具调用显示参数卡片，助手回复使用 Markdown 面板。输入区底部显示当前 Profile、模型和输入预算的估算占比。
+
+`/status` 可查看模型窗口及来源：手动配置、服务端报告或未知。token 在请求前只能估算（含工具定义）；上次请求的输入量以服务端 `usage` 为准。`/cost` 显示本次任务已报告的用量，报告缺失时会明确提示，详见[计数与窗口说明](docs/profiles.md#token-用量与模型窗口)。
 
 ## 常用命令
 
@@ -91,7 +93,10 @@ Copy-Item examples/profiles/companion.yaml profile_configs/my-companion.yaml
 ## 想了解代码？
 
 - [当前架构](docs/architecture.md)：现在有哪些模块，分别负责什么。
+- [交互式架构图](docs/diagrams/README.md)：下载后用浏览器打开，查看整体结构和完成验证流程。
 - [后续需求与计划](docs/plans/README.md)：通用 Profile、架构整理、Goal / Todo 和长上下文优化，均标明实施状态。
+
+已完成的设计记录归档在 [docs/archive](docs/archive/)，需要了解历史取舍时再看。
 
 修改代码后，可以运行检查：
 

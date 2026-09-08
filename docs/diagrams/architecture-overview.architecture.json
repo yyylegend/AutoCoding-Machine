@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AutoCoding Machine:终端 AI 编程助手架构",
+    "output": "docs/diagrams/architecture-overview.html",
+    "locale": "zh-CN",
+    "viewBox": [1160, 540],
+    "quality_profile": "showcase"
+  },
+  "layout": {
+    "mode": "grid",
+    "cols": 5,
+    "cellW": 150,
+    "cellH": 64,
+    "gapX": 84,
+    "gapY": 76
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "用户", "sublabel": "自然语言提需求", "row": 0, "col": 0 },
+    { "id": "cli", "type": "frontend", "label": "终端界面 CLI/TUI", "sublabel": "输入、命令、渲染", "row": 0, "col": 1 },
+    { "id": "runtime", "type": "backend", "label": "运行时组装", "sublabel": "AgentRuntime + Factory", "row": 0, "col": 2 },
+    { "id": "loop", "type": "backend", "label": "执行循环", "sublabel": "模型与工具循环", "row": 0, "col": 3, "tag": "MachineLoop" },
+    { "id": "llm", "type": "external", "label": "大模型", "sublabel": "OpenAI 兼容接口", "row": 0, "col": 4 },
+    { "id": "context", "type": "backend", "label": "上下文管理", "sublabel": "token 预算 / 压缩 / 召回", "row": 1, "col": 2 },
+    { "id": "gate", "type": "security", "label": "完成证据门", "sublabel": "Coding 修改验证", "row": 1, "col": 3 },
+    { "id": "tools", "type": "backend", "label": "工具集", "sublabel": "读写文件 / grep / 跑测试", "row": 1, "col": 4 },
+    { "id": "memory", "type": "database", "label": "长期记忆", "sublabel": "MEMORY.md / USER.md", "row": 2, "col": 1 },
+    { "id": "sessions", "type": "database", "label": "会话记录", "sublabel": "JSONL 追加写,不回改", "row": 2, "col": 2 },
+    { "id": "workspace", "type": "database", "label": "工作区", "sublabel": "你的项目文件", "row": 2, "col": 4 }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "任务执行与模型调用", "wraps": ["cli", "runtime", "loop", "context", "gate", "tools"], "pad": 16 }
+  ],
+  "connections": [
+    { "from": "user", "to": "cli", "label": "自然语言输入", "variant": "emphasis", "labelDy": 48 },
+    { "from": "cli", "to": "runtime", "label": "读 Profile,组装组件", "labelDy": 48 },
+    { "from": "runtime", "to": "loop", "label": "启动执行循环", "labelDy": -20 },
+    { "from": "loop", "to": "llm", "label": "发上下文,收回复", "variant": "emphasis", "labelDy": -20 },
+    { "from": "loop", "to": "gate", "label": "候选回答送审", "fromSide": "bottom", "toSide": "top", "via": [[802, 150], [770, 150], [770, 210], [802, 210]], "labelAt": [762, 172] },
+    { "from": "gate", "to": "loop", "label": "证据不足,退回验证", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "via": [[802, 210], [834, 210], [834, 150], [802, 150]], "labelAt": [838, 192] },
+    { "from": "context", "to": "loop", "label": "组装上下文与预算", "labelAt": [685, 205] },
+    { "from": "sessions", "to": "context", "label": "BM25 检索旧会话" },
+    { "from": "memory", "to": "context", "label": "注入长期记忆" },
+    { "from": "loop", "to": "tools", "label": "发起工具调用(权限把关)" },
+    { "from": "tools", "to": "workspace", "label": "读写文件、跑测试", "labelDy": 24 }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主链路:一次任务的旅程",
+      "items": [
+        "用户输入 → CLI 组装运行时 → 执行循环调模型",
+        "模型要用工具改代码,工具结果回到模型继续推理",
+        "Coding 的完成门检查修改验证;其他预设不启用该门"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "数据落在哪",
+      "items": [
+        "会话 JSONL 只追加、不回改,压缩只影响运行时视图",
+        "MEMORY.md 是模型用工具维护的跨会话精选记忆",
+        "工作区文件是唯一被真实修改的代码"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "上下文怎么省",
+      "items": [
+        "每次调模型前按 token 预算组装消息,含工具定义开销",
+        "自动用 BM25 从旧会话召回相关历史,临时注入不落盘",
+        "原始细节仍保存在 JSONL;召回受范围与输出预算限制"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "一套内核,三种角色",
+      "items": [
+        "Engine 不认识 Coding/Review/Companion,只提供循环与契约",
+        "Profile 决定注册哪些工具和指令,能力按角色裁剪",
+        "review 不注册写工具,companion 不带文件和 Shell"
+      ]
+    }
+  ]
+}

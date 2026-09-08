@@ -1,5 +1,7 @@
 # Architecture
 
+配套 [交互式架构图](diagrams/README.md) 展示整体结构和完成验证流程；细节与限制以本文和代码为准。
+
 本文描述当前代码实现。下一轮的目标架构见 [架构演进计划](plans/2026-09-05-runtime-boundaries.md)，其中的 `AgentSession`、`AgentRun` 和统一事件接口尚未实现。
 
 未来需求统一放在 [plans 入口](plans/README.md)；通用 Profile、Goal / Todo、长上下文专项优化尚未实现，不能按规划中的接口调用。
@@ -58,7 +60,9 @@ Engine 不需要知道 Companion 的人格或 Coding 的提示词。Coding 保�
 
 所有 Profile 都将 sessions 和 input_history 放在 `.autocoding/profiles/<name>/` 下；runs 只有在 `trace_enabled: true` 时才创建。默认 Coding 的项目记忆仍兼容 `.autocoding/MEMORY.md`，用户记忆仍兼容全局 USER.md。首次启动会把旧的 `.autocoding/sessions`、`runs` 和 `input_history` 移到 `profiles/coding/`，只在目标不存在时移动文件。这是应用状态分离，不是操作系统级隔离。
 
-模型 ID 覆盖同时影响主调用和摘要。显式输入预算优先；自定义模型查询自己的窗口，不复用默认模型的预算缓存。token 计数目前仍为通用 tokenizer 估算，Qwen 的精确适配留待专项优化。
+模型 ID 覆盖同时影响主调用和摘要。显式输入预算优先；自定义模型查询自己的窗口，运行时重建时重新解析，不跨模型或配置变更缓存预算。每个 ContextManager 固定模型计数器，估算包含消息元数据、封装余量和工具定义；工具开销只从每次请求预算中扣一次。已知模型走 tiktoken 官方映射，未知模型明确标为通用回退，Qwen 精确 tokenizer 适配仍待专项优化。
+
+`/status` 分开展示当前输入估算、上次请求的服务端输入用量、窗口来源与输入预算。`/cost` 是每次用户任务的已报告用量，不含摘要调用；缺失 usage 不当作零消耗。窗口及计数能力的具体边界见 [配置指南](profiles.md#token-用量与模型窗口)。
 
 旧 `profiles/coding/` 下的 Skills、上下文入口保留兼容导出，实际实现只有共享层的一份。终端渲染目前仍在该目录内，无界面调用不依赖它。
 
@@ -136,7 +140,7 @@ Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/r
 
 ## 上下文摘要与超限的失败策略
 
-- Profile 设置 `context_budget` 时直接使用该输入预算，调用方负责预留输出空间。未设置时：默认模型按 `CODING_CONTEXT_LENGTH` → `/models` 元数据 → 128K 默认窗口解析；覆盖模型 ID 时单独查询该模型元数据，失败则使用默认窗口。由窗口自动计算的输入预算最多占 80%，并预留最大输出和估算误差空间。
+- Profile 设置 `context_budget` 时直接使用该输入预算，调用方负责预留输出空间。未设置时：默认模型优先使用 `CODING_CONTEXT_LENGTH`，否则查询匹配模型的 `/models` 元数据；llama.cpp 使用 `/props` 的部署 `n_ctx`，不使用 `n_ctx_train`。覆盖成不同模型时单独查询，不沿用默认模型窗口。查询失败显示窗口未知，仅按 128K 假设计算回退预算。自动输入预算最多占窗口的 80%，同时预留最大输出和估算误差空间。
 - 摘要默认**关闭**（`.env` 的 `CONTEXT_SUMMARY_ENABLED=false`）：不调用 LLM，只做安全截断。
 - 开启后，异常、超时、HTTP 错误、空响应统一视为失败，但**不中断任务**：
   改为插入一段确定性摘录（原始目标 / 近期决定 / 报错现场 / 涉及文件，总长 ≤ 4000 字符，

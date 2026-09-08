@@ -1,0 +1,74 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "完成证据门:模型说「做完了」为什么不算数",
+    "output": "docs/diagrams/completion-gate-workflow.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "main", "label": "任务主流程" },
+    { "id": "branch", "label": "验证与兜底", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "work", "label": "任务进行中", "fromCol": 0, "toCol": 1 },
+    { "id": "judge", "label": "完成门裁决", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "deliver", "label": "交付", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": ["working", "claimed", "gate", "verified"],
+  "nodes": [
+    { "id": "working", "lane": "main", "col": 0, "type": "backend", "label": "开始干活", "sublabel": "模型改文件、跑命令", "width": 150 },
+    { "id": "claimed", "lane": "main", "col": 1, "type": "messagebus", "label": "模型说:「做完了」", "sublabel": "先存为候选回答", "width": 150 },
+    { "id": "gate", "lane": "main", "col": 2, "type": "security", "label": "完成门查证据", "sublabel": "净变化?验证新鲜?", "width": 150, "tag": "按变化判断" },
+    { "id": "verified", "lane": "main", "col": 4, "type": "backend", "label": "允许交付", "sublabel": "无需验证或证据有效", "width": 150 },
+    { "id": "reverify", "lane": "branch", "col": 3, "type": "messagebus", "label": "退回去验证", "sublabel": "插入提醒,让模型跑测试", "width": 150 },
+    { "id": "unverified", "lane": "branch", "col": 5, "type": "security", "label": "未验证交付", "sublabel": "答案不丢,如实标注⚠", "width": 150 }
+  ],
+  "edges": [
+    { "id": "model-claims", "from": "working", "to": "claimed", "label": "给出纯文字回答", "role": "main", "variant": "emphasis" },
+    { "id": "gate-check", "from": "claimed", "to": "gate", "role": "main" },
+    { "id": "gate-pass", "from": "gate", "to": "verified", "label": "无需验证或已通过", "role": "main", "variant": "emphasis" },
+    { "id": "gate-reject", "from": "gate", "to": "reverify", "label": "证据不足或过期", "role": "error" },
+    { "id": "reverify-back", "from": "reverify", "to": "working", "label": "继续干活", "role": "return", "variant": "emphasis" },
+    { "id": "reverify-fail", "from": "reverify", "to": "unverified", "label": "仍无证据(连续两次)", "role": "error" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "主路径:候选 → 裁决 → 放行",
+      "items": [
+        "有未验证修改或待验证候选时,流式文字先缓冲",
+        "无需验证可直接交付;验证通过且版本一致才复用原候选",
+        "验证回执不能顶替原候选回答"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "证据 1:文件净变化",
+      "items": [
+        "写工具首次触碰路径前,记录基线快照(存在性 + SHA-256 指纹)",
+        "临时文件建了又删、改了又改回原样,都不算净变化",
+        "读取失败保守当作有变化,绝不静默放行"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "证据 2:新鲜验证",
+      "items": [
+        "最后一次修改之后,run_test 成功或 run_bash 白名单命令(pytest / lint / build 类)退出码 0",
+        "先测试后修改 = 过期证据,必须重新验证",
+        "按完整 token 匹配命令,避免把 git checkout 误判成验证"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "兜底:保留有效候选",
+      "items": [
+        "连续两次缺证据:交付候选 + ⚠ 未验证标记",
+        "轮数耗尽:仍与当前修改版本一致的候选才可交付",
+        "无净变化直接放行;纯文档变化跳过代码验证"
+      ]
+    }
+  ]
+}
