@@ -1,6 +1,6 @@
 """CompletionGate V2 seam 测试。
 
-覆盖 docs/plans/2026-09-01-completion-verification-v2.md 的验收标准。
+覆盖 docs/archive/2026-09-01-completion-verification-v2.md 的验收标准。
 
 观察原则（按计划要求）：只通过公共 seam 断言——
 Gate 的 CompletionDecision、MachineLoop 的 result dict、

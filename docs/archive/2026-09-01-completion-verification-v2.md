@@ -1,5 +1,7 @@
 # AutoCoding Machine 完成验证与最终回答提交 V2 计划
 
+> 历史设计：已完成。下文的路径、测试数量和工作区描述属于当时记录；当前行为以 [架构说明](../architecture.md) 和代码为准。后续任务见 [规划入口](../plans/README.md)。
+
 **Author:** Codex
 **Date:** 2026-09-01
 **Status:** Implemented（2026-09-01 由 WorkBuddy 按本计划实施，审查修复后 316 测试全绿）

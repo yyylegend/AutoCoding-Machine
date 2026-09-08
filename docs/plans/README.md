@@ -16,8 +16,7 @@
 
 ## 历史方案
 
-以下是既有功能的设计与变更记录，不是新的待办清单。实际实现仍以代码和测试为准。
+已完成的设计统一放在 `docs/archive/`，保留设计取舍和验收依据，不作为新的待办清单。实际实现仍以代码和测试为准。
 
-- [完成验证门 V2](2026-09-01-completion-verification-v2.md)
-- [记忆与上下文恢复](2026-08-31-memory-compaction-resilience-v2.md)
-- [2026-08-31 变更记录](2026-08-31-change-summary.md)
+- [完成验证门 V2](../archive/2026-09-01-completion-verification-v2.md)
+- [记忆与上下文恢复](../archive/2026-08-31-memory-compaction-resilience-v2.md)
