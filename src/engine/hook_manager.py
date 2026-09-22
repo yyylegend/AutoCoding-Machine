@@ -43,6 +43,7 @@ from collections import defaultdict
 from typing import Any, Callable
 
 from src.common.logger import get_logger
+from src.engine.events import AgentEvent
 
 hook_logger = get_logger("hooks")
 
@@ -75,6 +76,7 @@ class HookManager:
         # 用 defaultdict(list) 避免每次注册新事件都要 if event not in dict
         self._callbacks: dict[str, list] = defaultdict(list)
         self._check_callbacks: dict[str, list] = defaultdict(list)
+        self._event_callbacks: list[Callable[[AgentEvent], None]] = []
 
     # ── 注册 ──────────────────────────────────────────
 
@@ -89,6 +91,10 @@ class HookManager:
         可以给同一个事件注册多个回调，按注册顺序执行。
         """
         self._callbacks[event].append(callback)
+
+    def on_event(self, callback: Callable[[AgentEvent], None]) -> None:
+        """订阅统一事件流；旧的按名称 Hook 继续保留兼容。"""
+        self._event_callbacks.append(callback)
 
     # ── 触发 ──────────────────────────────────────────
 
@@ -116,22 +122,24 @@ class HookManager:
         return "allow"
 
     def fire(self, event: str, **kwargs: Any) -> None:
-        """触发一个事件的所有回调。
+        """触发一个统一事件，并兼容旧的按名称回调。"""
+        self.emit(AgentEvent(event, dict(kwargs)))
 
-        参数：
-          event  — 事件名
-          kwargs — 传给回调的键值对。不同事件传不同字段。
-
-        回调按注册顺序执行。
-        单个回调异常不影响后续回调和主流程，但会打 warning 日志留底。
-        """
-        for cb in self._callbacks.get(event, []):
+    def emit(self, event: AgentEvent) -> None:
+        """向 typed subscribers 和 legacy subscribers 分发事件。"""
+        for cb in self._event_callbacks:
             try:
-                cb(**kwargs)
+                cb(event)
             except Exception as exc:
-                # 铁律：钩子失败绝不阻断主流程。
-                # 但要留一行日志，不然回调一直在崩都没人知道
+                hook_logger.warning(
+                    "事件回调异常（已忽略）：event=%s callback=%s error=%s",
+                    event.name, getattr(cb, "__name__", repr(cb)), exc,
+                )
+        for cb in self._callbacks.get(event.name, []):
+            try:
+                cb(**event.data)
+            except Exception as exc:
                 hook_logger.warning(
                     "Hook 回调异常（已忽略）：event=%s callback=%s error=%s",
-                    event, getattr(cb, "__name__", repr(cb)), exc,
+                    event.name, getattr(cb, "__name__", repr(cb)), exc,
                 )

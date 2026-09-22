@@ -41,6 +41,7 @@ import time
 from src.common.llm_client import ContextLengthExceededError
 from src.common.token_utils import count_tokens_old_style as count_tokens
 from src.engine.hook_manager import HookManager
+from src.engine.request_view import RequestView
 
 
 class MachineLoop:
@@ -72,6 +73,8 @@ class MachineLoop:
         context_selector=None,
         session_store=None,
         completion_gate=None,
+        status_bar=None,
+        request_view=None,
     ):
         """初始化。
 
@@ -98,6 +101,10 @@ class MachineLoop:
                             模型给出最终回答时调用其 evaluate(candidate) 做裁决：
                             accept → 回答生效；continue → 退回验证；fail → 带未验证
                             标记交付。不传则模型说 done 即完成，行为同旧版。
+          status_bar     — 可选的状态消息构造器。每次模型调用前接收一份执行状态，
+                             返回只存在于本次请求中的消息；不会写入 messages 或 Session。
+          request_view  — 可选的请求视图构造器。未传时从 context_selector 和
+                             status_bar 创建默认 RequestView。
         """
         self.model_fn = model_fn
         self.tools = tools
@@ -110,12 +117,68 @@ class MachineLoop:
         self.context_selector = context_selector
         self.session_store = session_store
         self.completion_gate = completion_gate
+        self.status_bar = status_bar
+        self.request_view = request_view or RequestView(
+            context_selector=context_selector,
+            status_bar=status_bar,
+        )
+        self._status_active = False
+        self._status_goal = ""
+        self._status_tool_calls = 0
+        self._status_last_tool = None
+        self._status_last_failure = None
+        if self.status_bar is not None:
+            self.hooks.on_event(self._on_status_event)
+
+    def start_task(self, messages=None) -> None:
+        """开始一个新的状态栏任务；权限暂停后的 resume 不会调用它。"""
+        if self.status_bar is None:
+            return
+        self._status_active = True
+        self._status_goal = self._latest_user_message(messages or [])
+        self._status_tool_calls = 0
+        self._status_last_tool = None
+        self._status_last_failure = None
+
+    def _finish_status_task(self) -> None:
+        self._status_active = False
+
+    @staticmethod
+    def _latest_user_message(messages) -> str:
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            content = str(message.get("content") or "").strip()
+            if content:
+                return content
+        return ""
+
+    def _build_request_messages(self, messages, turn):
+        """在临时请求视图末尾追加状态，不改变原始消息列表。"""
+        state = {
+            "goal": self._status_goal,
+            "turn": turn + 1,
+            "max_turns": self.budget.max_turns,
+            "tool_calls": self._status_tool_calls,
+            "last_tool": self._status_last_tool,
+            "last_failure": self._status_last_failure,
+        }
+        return self.request_view.build(messages, state)
+
+    def _on_status_event(self, event) -> None:
+        """从统一事件流记录工具状态，覆盖自动和确认后的执行路径。"""
+        if event.name == "pre_tool":
+            self._status_tool_calls += 1
+            self._status_last_tool = event.data.get("tool_name")
+        elif event.name == "post_tool" and event.data.get("error"):
+            name = event.data.get("tool_name") or self._status_last_tool or "unknown"
+            self._status_last_failure = (
+                f"{name}: {event.data.get('error_type') or 'error'}"
+            )
 
     def _select_context(self, messages):
         """构造本次模型请求视图；原始 messages 始终保持不变。"""
-        if self.context_selector is None:
-            return messages
-        return self.context_selector.select(messages)
+        return self.request_view.select(messages)
 
     def _recover_from_context_overflow(self, messages, turn, request_messages=None):
         """上下文超限后的唯一一次恢复尝试：强制压缩 → 重调模型一次。
@@ -136,11 +199,11 @@ class MachineLoop:
 
         # 先量一次压缩前的 token 数，用来判断"压缩到底有没有进展"
         if request_messages is None:
-            request_messages = self._select_context(messages)
+            request_messages = self._build_request_messages(messages, turn)
         request_counter = getattr(self.context_manager, "count_request_tokens", count_tokens)
         tokens_before = request_counter(request_messages)
         compacted = self.context_manager.maybe_compact(messages, force=True)
-        retry_messages = self._select_context(compacted)
+        retry_messages = self._build_request_messages(compacted, turn)
         tokens_after = request_counter(retry_messages)
 
         if tokens_after >= tokens_before:
@@ -200,6 +263,9 @@ class MachineLoop:
           6. Guard 检查是否卡死
           7. 继续下一轮
         """
+        if self.status_bar is not None and not self._status_active:
+            self.start_task(messages)
+
         turn = 0
         while turn < self.budget.max_turns:
             # 第 0 步：压缩上下文（如果提供了 context_manager）
@@ -225,13 +291,14 @@ class MachineLoop:
             # 第 1 步：检查取消
             if cancel.is_cancelled():
                 self.hooks.fire("cancelled", message="任务已取消", turn=turn)
+                self._finish_status_task()
                 return {"status": "cancelled"}
 
             # 第 2 步：调模型（用构造时传入的 model_fn）
             # 上下文超限时的恢复策略：强制压缩一次 → 重试一次。
             # 只重试一次是硬约束：压缩没进展或二次仍超限就明确失败，
             # 否则"压缩没用还反复调模型"就是个死循环。
-            request_messages = self._select_context(messages)
+            request_messages = self._build_request_messages(messages, turn)
             try:
                 response = self.model_fn(request_messages)
             except ContextLengthExceededError:
@@ -241,6 +308,7 @@ class MachineLoop:
                     request_messages=request_messages,
                 )
                 if outcome["status"] == "failed":
+                    self._finish_status_task()
                     return outcome  # 恢复失败，返回清晰错误，不重试
                 # 恢复成功：后续轮次也用压缩后的消息列表
                 messages = outcome["messages"]
@@ -269,6 +337,7 @@ class MachineLoop:
                         reply = decision.final_response
                         self._record({"role": "assistant", "content": reply})
                         self.hooks.fire("done", reply=reply, turn=turn)
+                        self._finish_status_task()
                         return {"status": "success", "reply": reply}
 
                     if decision.action == "fail":
@@ -277,6 +346,7 @@ class MachineLoop:
                         reply = decision.final_response
                         self._record({"role": "assistant", "content": reply})
                         self.hooks.fire("failed", error="verification_required", turn=turn)
+                        self._finish_status_task()
                         return {
                             "status": "failed",
                             "error": "verification_required",
@@ -308,16 +378,19 @@ class MachineLoop:
                     if reply_content:
                         self._record({"role": "assistant", "content": reply_content})
                     self.hooks.fire("done", reply=reply_content, turn=turn)
+                    self._finish_status_task()
                     return {"status": "success", "reply": reply_content}
 
                 # 只是普通文本，不算成功
                 if response.content:
                     self._record({"role": "assistant", "content": response.content})
                     self.hooks.fire("need_input", reply=response.content, turn=turn)
+                    self._finish_status_task()
                     return {"status": "need_input", "reply": response.content}
 
                 # 既没 tool_call 也没 content，算失败
                 self.hooks.fire("failed", error="no_tool_call", turn=turn)
+                self._finish_status_task()
                 return {"status": "failed", "error": "no_tool_call"}
 
             # 第 4 步：有 tool_calls，先追加 assistant message
@@ -412,6 +485,7 @@ class MachineLoop:
             # 第 6 步：Guard 检查（Phase 2 先简单实现，Phase 3 再补完整）
             if self.guard.should_stop(messages, turn):
                 self.hooks.fire("failed", error="guard_stopped", turn=turn)
+                self._finish_status_task()
                 return {"status": "failed", "error": "guard_stopped"}
 
             turn += 1
@@ -423,6 +497,8 @@ class MachineLoop:
             if pending is not None:
                 self._record({"role": "assistant", "content": pending})
                 self.hooks.fire("failed", error="max_turns", turn=turn)
+                self._finish_status_task()
                 return {"status": "failed", "error": "max_turns", "reply": pending}
         self.hooks.fire("failed", error="max_turns", turn=turn)
+        self._finish_status_task()
         return {"status": "failed", "error": "max_turns"}

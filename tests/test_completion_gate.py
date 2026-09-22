@@ -72,6 +72,7 @@ def make_runtime(tmp_path, steps, calls, store=None, **kwargs):
     context_manager.maybe_compact.side_effect = lambda messages, force=False: messages
     context_selector = Mock()
     context_selector.select.side_effect = lambda messages: messages
+    kwargs.setdefault("completion_gate", make_gate(tmp_path))
 
     runtime = create_coding_runtime(
         workspace=tmp_path,
@@ -533,9 +534,8 @@ def test_denied_verification_delivers_candidate_once(tmp_path):
     assert "未验证" in result["reply"]
 
 
-def test_runtime_resume_preserves_pending_candidate_and_evidence(tmp_path):
-    """EC-11：ASK 权限暂停后 resume，基线快照、pending candidate、
-    验证证据都必须保留。"""
+def test_agent_run_resume_preserves_pending_candidate_and_evidence(tmp_path):
+    """EC-11：AgentRun 处理 ASK 后，候选和验证证据都必须保留。"""
     store = SessionStore(sessions_dir_for(tmp_path), "s1")
     hooks_holder = {}
     calls = []
@@ -546,30 +546,14 @@ def test_runtime_resume_preserves_pending_candidate_and_evidence(tmp_path):
     ]
     runtime = make_runtime(tmp_path, steps, calls, store=store, auto_approve=False)
     hooks_holder["hooks"] = runtime.hooks
-    tools = runtime.tools
-
-    # 第一次 run：write_file 需要确认，循环挂起
-    first = runtime.run(
+    run = runtime.create_run(
         [{"role": "user", "content": "改 a.py"}], CancellationToken()
     )
+    first = run.start()
     assert first["status"] == "permission_required"
 
-    # 用户批准：真实执行工具，结果回填 + 落盘（和 CLI 的恢复逻辑一致，
-    # post_tool 事件也要照发，Gate 靠它记修改版本）
-    tool_result = tools.execute(first["pending_tool_call"])
-    runtime.hooks.fire(
-        "post_tool", tool_name=first["pending_tool_call"].name,
-        tool_call_id=first["pending_tool_call"].id,
-        error=tool_result.error, error_type=tool_result.error_type,
-        result_content=tool_result.content,
-        result_metadata=tool_result.metadata, duration_ms=0,
-    )
-    messages = first["messages"]
-    messages.append(tool_result.to_message())
-    store.append(tool_result.to_message())
-
-    # resume：candidate → continue → 验证 → accept，全链路状态没丢
-    second = runtime.resume(messages, CancellationToken())
+    # AgentRun 负责真实执行、Hook、回填、落盘和 resume。
+    second = run.resolve_permission(approved=True)
 
     assert second["status"] == "success"
     assert second["reply"].startswith("候选讲解")

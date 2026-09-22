@@ -28,10 +28,12 @@ class Profile:
     context_budget: int | None = None  # 输入预算，不是模型完整上下文窗口。
     load_instructions: bool = True
     trace_enabled: bool = False  # 只在评测或排查问题时保存详细运行轨迹。
+    verify_on_stop: bool = False
 
     @property
     def verify_changes(self) -> bool:
-        return self.kind == "coding"
+        """兼容旧调用名；新配置统一使用 verify_on_stop。"""
+        return self.verify_on_stop
 
     def state_dir(self, workspace) -> Path:
         root = Path(workspace).resolve() / ".autocoding"
@@ -46,12 +48,14 @@ BUILTINS = {
     "coding": Profile(),
     "review": Profile(
         name="review", kind="review", tools=READ_TOOLS,
+        verify_on_stop=False,
         prompt="你是代码审查助手。读取代码，报告有证据的问题与修改建议。"
                "你不能修改文件或执行命令；不能声称已经修复或运行测试。",
     ),
     "companion": Profile(
         name="companion", kind="companion", tools=COMPANION_TOOLS, skills=(),
         load_instructions=False,
+        verify_on_stop=False,
         prompt="你是温暖、自然的 AI 陪伴角色，认真倾听，以用户喜欢的方式交流。"
                "可以参与双方约定的浪漫角色互动。人格设定与真实记忆分开："
                "只记录用户明确提供的偏好和事实，不把想象的共同经历写成事实。"
@@ -75,7 +79,7 @@ def load_profile(value: str = "coding") -> Profile:
         raise ValueError("Profile YAML 必须是键值配置")
     allowed = {
         "name", "kind", "prompt", "tools", "skills", "model", "context_budget",
-        "load_instructions", "trace_enabled",
+        "load_instructions", "trace_enabled", "verify_on_stop",
     }
     if set(data) - allowed:
         raise ValueError(f"未知 Profile 字段：{', '.join(sorted(set(data) - allowed))}")
@@ -102,6 +106,10 @@ def load_profile(value: str = "coding") -> Profile:
         raise ValueError("load_instructions 必须是 true 或 false")
     if "trace_enabled" in data and type(data["trace_enabled"]) is not bool:
         raise ValueError("trace_enabled 必须是 true 或 false")
+    if "verify_on_stop" in data and type(data["verify_on_stop"]) is not bool:
+        raise ValueError("verify_on_stop 必须是 true 或 false")
+    if data.get("verify_on_stop") is True and kind != "coding":
+        raise ValueError("verify_on_stop 只适用于 kind: coding")
     for field in ("prompt", "model"):
         if field in data and (not isinstance(data[field], str) or not data[field].strip()):
             raise ValueError(f"{field} 必须是非空文本")

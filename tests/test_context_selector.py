@@ -173,7 +173,7 @@ def test_selector_allows_single_distinctive_query_token(tmp_path):
     assert "old-session" in selected[1]["content"]
 
 
-def test_runtime_session_switch_updates_loop_and_selector(tmp_path):
+def test_agent_session_switch_updates_loop_and_selector(tmp_path):
     first = SessionStore(sessions_dir_for(tmp_path), "first-session")
     second = SessionStore(sessions_dir_for(tmp_path), "second-session")
     runtime = create_coding_runtime(
@@ -182,7 +182,8 @@ def test_runtime_session_switch_updates_loop_and_selector(tmp_path):
         session_store=first,
     )
 
-    runtime.set_session_store(second)
+    session = runtime.create_session(first, [])
+    session.switch(second, [])
 
     assert runtime.session_store is second
     assert runtime.loop.session_store is second

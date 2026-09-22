@@ -144,6 +144,42 @@ def test_custom_profile_config_and_legacy_paths(tmp_path):
     assert profile.state_dir(tmp_path) == tmp_path / ".autocoding/profiles/my-review"
 
 
+def test_verify_on_stop_defaults_off_and_can_be_enabled_in_yaml(tmp_path):
+    assert load_profile("coding").verify_on_stop is False
+    assert load_profile("review").verify_on_stop is False
+
+    path = tmp_path / "coding.yaml"
+    path.write_text(
+        "name: my-coding\nkind: coding\nverify_on_stop: true\n",
+        encoding="utf-8",
+    )
+
+    assert load_profile(str(path)).verify_on_stop is True
+
+
+def test_environment_overrides_profile_verification_setting(tmp_path, monkeypatch):
+    from src.config.settings import settings
+    from src.profiles.coding.completion_gate import CompletionGate
+
+    profile = replace(load_profile("coding"), verify_on_stop=True)
+    context_manager = ContextManager(max_tokens=10000)
+
+    monkeypatch.setattr(settings, "CODING_VERIFY_ON_STOP", False)
+    disabled = create_runtime(
+        tmp_path, lambda _: AgentResponse(content="完成", done=True),
+        profile=profile, context_manager=context_manager,
+    )
+    assert disabled.completion_gate is None
+
+    monkeypatch.setattr(settings, "CODING_VERIFY_ON_STOP", True)
+    enabled = create_runtime(
+        tmp_path, lambda _: AgentResponse(content="完成", done=True),
+        profile=replace(profile, verify_on_stop=False),
+        context_manager=ContextManager(max_tokens=10000),
+    )
+    assert isinstance(enabled.completion_gate, CompletionGate)
+
+
 @pytest.mark.parametrize("config", [
     "name: ../escape", "name: coding", "name: mine\nkind: unknown",
     "name: mine\nkind: review\ntools: [run_bash]", "name: mine\nskills: nope",

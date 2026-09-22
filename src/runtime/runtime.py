@@ -1,6 +1,8 @@
 """Agent Runtime：统一保存组件并构造消息。"""
 
 from src.engine import assemble
+from src.runtime.run import AgentRun
+from src.runtime.session import AgentSession
 
 
 class AgentRuntime:
@@ -23,6 +25,7 @@ class AgentRuntime:
         self.context_manager = components.get("context_manager")
         self.context_selector = components.get("context_selector")
         self.completion_gate = components.get("completion_gate")
+        self.status_bar = components.get("status_bar")
         self.session_store = components.get("session_store")
         self.trace = components.get("trace")
 
@@ -37,13 +40,27 @@ class AgentRuntime:
         return assemble(self.system_prompt, history, dynamic_injections=injections)
 
     def run(self, messages, cancel):
-        """开始新用户任务：重置完成证据后运行底层 MachineLoop。"""
-        if self.completion_gate is not None:
-            self.completion_gate.start_task()
-        return self.loop.run(messages, cancel)
+        """兼容入口：新调用方应通过 create_run() 管理完整任务生命周期。"""
+        return self.create_run(messages, cancel).start()
+
+    def create_run(self, messages, cancel=None):
+        """创建一次用户任务的 lifecycle module。"""
+        return AgentRun(
+            loop=self.loop,
+            tools=self.tools,
+            hooks=self.hooks,
+            session_store=self.session_store,
+            completion_gate=self.completion_gate,
+            messages=messages,
+            cancel=cancel,
+        )
+
+    def create_session(self, store, history, extra_injections=None):
+        """创建一段对话的会话视图与任务创建 module。"""
+        return AgentSession(self, store, history, extra_injections)
 
     def resume(self, messages, cancel):
-        """恢复当前任务，不清空权限暂停前已经收集的完成证据。"""
+        """兼容旧调用方；新调用方使用 AgentRun.resolve_permission()。"""
         return self.loop.run(messages, cancel)
 
     def set_session_store(self, session_store):

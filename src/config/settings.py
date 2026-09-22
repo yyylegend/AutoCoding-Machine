@@ -10,6 +10,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
 
+def _optional_bool(name: str) -> bool | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in ("true", "1", "yes", "on"):
+        return True
+    if normalized in ("false", "0", "no", "off"):
+        return False
+    raise ValueError(f"{name} 必须是 true 或 false")
+
+
 class Settings:
     """只保留 Engine、Runtime 与 CLI 实际使用的配置。"""
 
@@ -32,6 +44,7 @@ class Settings:
     )
 
     CODING_MAX_TURNS: int = int(os.getenv("CODING_MAX_TURNS", "30"))
+    CODING_VERIFY_ON_STOP: bool | None = _optional_bool("CODING_VERIFY_ON_STOP")
     CONTEXT_SUMMARY_ENABLED: bool = os.getenv("CONTEXT_SUMMARY_ENABLED", "false").lower() == "true"
 
     MEMORY_ENABLED: bool = os.getenv("MEMORY_ENABLED", "true").lower() == "true"

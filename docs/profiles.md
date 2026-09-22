@@ -42,6 +42,17 @@ load_instructions: true
 | `context_budget` | 可选，输入 token 预算（含工具定义估算）；不是模型完整窗口，也不会自动验证服务端是否支持该长度。请为最大输出和消息封装留出空间 |
 | `load_instructions` | 是否读取全局和项目的 AGENTS.md / CLAUDE.md；Companion 默认关闭 |
 | `trace_enabled` | 是否保存详细运行轨迹；默认 `false`。开启会额外生成 `runs/`，适合评测和排查问题 |
+| `verify_on_stop` | 是否启用 Coding 完成验证门；仅 `kind: coding` 生效。默认 `false` |
+
+`verify_on_stop` 控制 Agent 修改代码后、交付最终回答前是否要求新鲜的测试或构建证据。默认关闭。自定义 Coding Profile 可以显式开启：
+
+```yaml
+name: my-coding
+kind: coding
+verify_on_stop: true
+```
+
+环境变量 `CODING_VERIFY_ON_STOP=true|false` 优先于 Profile YAML，可覆盖当前进程中的设置。`.env` 中若显式写了 `false`，要改用 Profile 设置时需删除该环境变量。此开关只影响完成验证门，不改变工具权限确认。
 
 Skills 从 `~/.agents/skills/` 和 `<workspace>/.agents/skills/` 发现，项目级同名覆盖全局级。Profile 组装时筛选清单，搜索和加载工具共用该清单；修改技能目录后重新启动。修改自定义 YAML 后可用 `/profile <路径>` 重新加载变化后的配置。要让模型加载 Skills，需启用 `load_skill` 工具。
 

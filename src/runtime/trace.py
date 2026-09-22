@@ -54,6 +54,15 @@ class RunTrace:
     def after_tool(self, tool_name, error=False, duration_ms=None, **_):
         self.write("tool_result", tool=tool_name, error=error, duration_ms=duration_ms)
 
+    def on_event(self, event):
+        """把统一事件流转换为诊断记录。"""
+        if event.name == "post_tool":
+            self.after_tool(**event.data)
+        elif event.name == "done":
+            self.done(**event.data)
+        elif event.name == "failed":
+            self.failed(**event.data)
+
     def done(self, **_):
         self.write("done")
 

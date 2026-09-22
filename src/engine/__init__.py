@@ -9,7 +9,9 @@ Coding / Browser 等具体能力在 src/profiles/ 里。
 已实现：
   contracts.py          — ToolCall / ToolResult / AgentResponse 等契约
   machine_loop.py       — 核心 while-loop（model_fn 构造注入）
-  hook_manager.py       — 生命周期钩子管理器（取代 EventSink）
+  hook_manager.py       — 生命周期钩子管理器与 typed event 分发
+  events.py             — AgentEvent 执行事件契约
+  request_view.py       — 临时模型请求视图
   permission_manager.py — 只读工具 AUTO，未知工具 DENY
   guard_manager.py      — 连续 3 次相同调用熔断
   context_manager.py    — assemble() 组装 + 安全切分压缩
@@ -31,8 +33,10 @@ from src.engine.contracts import (
     ToolResult,
 )
 from src.engine.hook_manager import HookManager
+from src.engine.events import AgentEvent
 from src.engine.guard_manager import GuardManager
 from src.engine.machine_loop import MachineLoop
+from src.engine.request_view import RequestView
 from src.engine.memory_manager import MemoryManager
 from src.engine.permission_manager import PermissionManager
 from src.engine.session_store import (
@@ -48,11 +52,13 @@ from src.engine.session_store import (
 __all__ = [
     "MachineLoop",
     "AgentResponse",
+    "AgentEvent",
     "BudgetPolicy",
     "CancellationToken",
     "ContextManager",
     "GuardManager",
     "HookManager",
+    "RequestView",
     "MemoryManager",
     "PermissionDecision",
     "PermissionManager",

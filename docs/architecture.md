@@ -2,21 +2,23 @@
 
 配套 [交互式架构图](diagrams/README.md) 展示整体结构和完成验证流程；细节与限制以本文和代码为准。
 
-本文描述当前代码实现。下一轮的目标架构见 [架构演进计划](plans/2026-09-05-runtime-boundaries.md)，其中的 `AgentSession`、`AgentRun` 和统一事件接口尚未实现。
+本文描述当前代码实现。下一轮的目标架构见 [架构演进计划](plans/2026-09-05-runtime-boundaries.md)：`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 第一切片已实现；完整多入口会话和更完整的事件迁移仍在计划中。
 
 未来需求统一放在 [plans 入口](plans/README.md)；通用 Profile、Goal / Todo、长上下文专项优化尚未实现，不能按规划中的接口调用。
 
 ## 当前结构
 
-CLI 是外部交互入口，Coding、Review 与 Companion 使用同一运行时，由 `src/profiles/config.py` 决定能力组合。目前 CLI 仍创建工具、权限、模型适配器和上下文管理器，再交给 Factory 连接；Runtime 尚未完全隐藏组装细节。
+CLI 是外部交互入口，Coding、Review 与 Companion 使用同一运行时，由 `src/profiles/config.py` 决定能力组合。CLI 仍负责终端 Hook、模型适配器和预算元数据展示；工具、权限、上下文、完成验证和预算对象由 Factory 统一组装。会话视图已收拢到 `AgentSession`，单次任务的启动、权限恢复和取消已收拢到 `AgentRun`。
 
 ```text
 src/__main__.py
   → profiles/coding/cli.py：输入、命令、组件创建、会话视图
       → profiles/config.py：读取 Profile
-      → runtime/factory.py：连接组件，创建 AgentRuntime
-          → engine/machine_loop.py：模型与工具循环
-          → runtime/：上下文、Skills、历史检索、记忆注入、Trace
+      → runtime/factory.py：组装 RuntimeComponents，创建 AgentRuntime
+          → runtime/session.py：AgentSession 管理 JSONL 派生的会话视图
+              → runtime/run.py：AgentRun 管理单次任务与权限恢复
+                  → engine/machine_loop.py：模型与工具循环
+          → runtime/：上下文、RequestView、Skills、历史检索、记忆注入、Trace
           → common/model_adapter.py：模型调用与响应解析
           → profiles/coding/：工具实现与 Coding 完成验证
 ```
@@ -28,15 +30,16 @@ src/__main__.py
 | 状态 | 当前持有者 |
 | --- | --- |
 | 当前 Profile 与配置切换 | CLI 的 `run_cli` 外层循环 |
-| 当前 store、history、压缩视图、Plan Mode | CLI 的 `_run_profile` 局部变量 |
-| 对原始会话的读写 | `SessionStore`；CLI 与 MachineLoop 调用它追加消息 |
+| 当前 store、history、压缩视图 | `AgentSession`；Plan Mode 仍由 CLI 局部变量持有 |
+| 对原始会话的读写 | `SessionStore`；`AgentSession` 追加用户/技能消息，`AgentRun` 与 `MachineLoop` 追加工具/助手消息 |
 | 消息组装与运行组件引用 | `AgentRuntime`、`RuntimeRegistry` |
-| 取消信号、执行轮数 | CLI 创建 `CancellationToken`，MachineLoop 管理执行轮数 |
+| 单次任务的取消、当前结果与权限恢复 | `AgentRun`；CLI 只收集用户的批准结果 |
+| 执行轮数 | `MachineLoop` |
 | 文件基线、验证版本、候选回答 | Coding 的 `CompletionGate` |
-| 工具可用范围与资源 | `ProfileTools`、`ToolEnvironment`、`ToolManager` |
-| 运行记录 | `RunTrace` 包装模型调用，并订阅部分 Hooks |
+| 工具可用范围与资源 | `RuntimeComponents` 中的 `ProfileTools`、`ToolEnvironment`、`ToolManager` |
+| 运行记录 | `RunTrace` 包装模型调用，并订阅 typed `AgentEvent` |
 
-目前还没有单独的会话控制器或任务状态对象。`ToolEnvironment` 仍继承 `WorkspaceSandbox`；TUI 与日志使用部分共享 Hooks，但没有覆盖全部生命周期的统一事件协议。
+目前已有第一切片的 `AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent`，但它们不替代 `MachineLoop`。`AgentSession` 保留 JSONL 作为原始事实源，管理压缩和清屏后的进程内视图；`AgentRun` 持有一次任务的消息、取消令牌和待确认工具，并在确认后统一触发事件、回填消息、写入 Session 再恢复循环。`RequestView` 负责历史召回和临时状态追加；旧的按名称 Hook 仍保留给 CompletionGate 等控制策略。`ToolEnvironment` 仍继承 `WorkspaceSandbox`。
 
 ## Profiles 与共享模块
 
@@ -51,10 +54,12 @@ src/__main__.py
 | `runtime/memory.py` | 构造记忆路径与注入，工具只调用存储服务 |
 | `runtime/history.py` | JSONL 历史检索，供工具和自动召回复用 |
 | `runtime/context.py`、`context_selector.py`、`prompts.py` | 上下文预算、摘要、召回及指令注入 |
+| `engine/request_view.py` | 组合本次请求的历史召回和临时状态，不修改原始消息 |
+| `engine/events.py`、`engine/hook_manager.py` | typed 执行事件流与兼容的按名称 Hook |
 | `common/model_adapter.py` | 无界面的模型调用和响应解析 |
 | `runtime/trace.py` | 独立诊断记录，不参与模型历史召回 |
 
-Engine 不需要知道 Companion 的人格或 Coding 的提示词。Coding 保留完成验证门；Review 不注册写工具；Companion 不注册文件和 Shell 工具，并默认关闭 Coding 指令文件加载。
+Engine 不需要知道 Companion 的人格或 Coding 的提示词。Coding 可通过 Profile 的 `verify_on_stop` 启用完成验证门；Review 不注册写工具；Companion 不注册文件和 Shell 工具，并默认关闭 Coding 指令文件加载。
 
 `ProfileTools` 以筛选后的技能清单决定是否注册技能入口：清单为空时，`search_skills` 和 `load_skill` 既不出现在模型工具定义中，也不能被执行。低层搜索工具仍处理空清单，明确区分“没有可用技能”和“关键词不匹配”。
 
@@ -79,10 +84,12 @@ Engine 不需要知道 Companion 的人格或 Coding 的提示词。Coding 保�
 ```text
 User input
   → CLI calls AgentRuntime.build_messages
-  → ContextSelector temporarily recalls relevant old-session context
+  → AgentRuntime.create_session rebuilds the current session view
+  → AgentSession.begin_run appends the user message and creates AgentRun
+  → RequestView temporarily recalls old-session context and appends AgentStatusBar
   → MachineLoop asks the model
   → Permission and Hook checks
-  → ToolManager executes one tool
+  → ToolManager executes one tool, or AgentRun resolves a user confirmation
   → Tool result returns to the model
   → CompletionGate checks validation evidence (Coding only)
   → Final reply or next tool call
@@ -96,7 +103,7 @@ User input
 
 ### `src/runtime`
 
-提供组装入口。`create_runtime()` 把 Engine 与所选 Profile 组合成 `AgentRuntime`，支持调用方注入组件。目前 CLI 与 Factory 都承担部分创建工作，尚未收敛为一个完整的会话创建入口。
+提供组装入口。`build_runtime_components()` 统一创建工具、权限、上下文、完成验证、预算和状态栏；`create_runtime()` 把这组组件与 Engine、Profile 组合成 `AgentRuntime`。`AgentRuntime.create_session()` 创建会话视图，`AgentRuntime.create_run()` 创建单次任务。CLI 仍负责终端适配器和交互，不是完整的多入口会话创建入口。
 
 ### `src/profiles/coding`
 
@@ -113,7 +120,7 @@ Coding 专属系统提示词、完成验证、Plan Mode、沙箱和代码工具�
 | 层 | 载体 | 谁写 | 特点 |
 | --- | --- | --- | --- |
 | 精选记忆 | `MEMORY.md` / `USER.md`（Markdown） | 模型通过 memory 工具 | 有容量上限，跨会话注入；写操作加锁 + 原子替换；权限按动作分级（`add` 自动，`replace`/`remove` 需确认） |
-| 原始会话 | `.autocoding/profiles/<name>/sessions/*.jsonl` | CLI 与 MachineLoop 通过 SessionStore 追加 | 作为恢复对话的依据，不因压缩而改写 |
+| 原始会话 | `.autocoding/profiles/<name>/sessions/*.jsonl` | `AgentSession`、`AgentRun` 与 MachineLoop 通过 SessionStore 追加 | 作为恢复对话的依据，不因压缩而改写 |
 | 压缩视图 | 进程内消息列表 | ContextManager 生成，CLI 与循环使用 | 不替换原始会话；发送给模型的视图可出现在独立诊断记录中 |
 
 压缩会丢细节，但丢掉的内容始终躺在 JSONL 里，模型可以用 `recall_history` 跨会话找回
@@ -131,6 +138,14 @@ Coding 专属系统提示词、完成验证、Plan Mode、沙箱和代码工具�
 - 检索失败时记录 warning 并跳过，不阻断 Agent 主任务。
 
 Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/resume` 不允许传入路径跳转至其他目录。工具注册表存在时，权限管理器不再用旧默认表放行未注册工具。
+
+## Agent 状态栏
+
+`AgentStatusBar` 在每次模型调用前，把 Harness 维护的当前状态追加到临时请求视图末尾。它使用 `user` 消息槽位承载明确标记的 `<agent_status>` 数据，不修改稳定 system 前缀，也不写入 `messages` 或 Session JSONL。
+
+当前由代码确定性维护的字段包括：当前用户目标、Profile、模型、轮次预算、工具调用数、最近工具、最近工具失败、工作目录、操作系统和 Coding 完成验证状态。状态栏是原始轨迹的短投影；当前项目还没有结构化 TODO / current_step 数据源，因此不会从模型文本中猜测这些字段。状态栏本身也不是权限边界，工具权限、沙箱和完成验证仍在执行层生效。
+
+状态栏由 `MachineLoop` 的任务状态生成，通过 `RequestView` 追加到本次模型请求；工具计数和失败信息来自统一 `AgentEvent` 流，因此自动执行和人工确认后的工具结果使用同一条记录路径。
 
 ## 诊断记录与原始会话
 
@@ -153,7 +168,7 @@ Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/r
 ## 完成证据门
 
 `CompletionGate`（Coding Profile 专属，`src/profiles/coding/completion_gate.py`）
-负责交付前的修改验证检查，不判断整个用户需求是否完成。它先判断是否有需要验证的代码净修改，再检查验证时序：
+在 Coding Profile 的 `verify_on_stop` 生效时负责交付前的修改验证检查，不判断整个用户需求是否完成。该选项默认关闭；Profile YAML 可开启或关闭，环境变量 `CODING_VERIFY_ON_STOP` 优先覆盖。Gate 先判断是否有需要验证的代码净修改，再检查验证时序：
 
 - **文件净变化**：`pre_tool` Hook 在写工具首次触碰路径前拍基线快照
   （存在性 + SHA-256，分块计算）；`evaluate` 时重读全部跟踪路径与基线比较。
@@ -190,4 +205,4 @@ Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/r
 3. **Profile 负责组合。** Engine 不依赖 Coding Agent，Coding Profile 在 Runtime seam 注册专属能力。
 4. **会话使用追加写。** JSONL 保留原始消息流水，压缩只影响运行时上下文。
 5. **安全默认拒绝。** 未注册工具、保护路径和异常检查不会静默放行。
-6. **Coding 的代码修改完成需要证据。** Gate 跟踪写工具触碰的文件及修改后的验证；这不等于独立验收任务正确性。Review 与 Companion 不使用该验证门。
+6. **可选的 Coding 修改验证。** 启用 `verify_on_stop` 时，Gate 跟踪写工具触碰的文件及修改后的验证；这不等于独立验收任务正确性。Review 与 Companion 不使用该验证门。

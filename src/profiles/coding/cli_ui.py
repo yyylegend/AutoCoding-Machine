@@ -529,10 +529,19 @@ def register_cli_hooks(hooks: HookManager):
             f"  [{THEME['warning']}]⏳ 正在验证修改…（最后一次修改后缺少验证证据）[/{THEME['warning']}]"
         )
 
-    hooks.on("pre_tool", on_pre_tool)
-    hooks.on("post_tool", on_post_tool)
-    hooks.on("done", on_done)
-    hooks.on("cancelled", on_cancelled)
-    hooks.on("compacted", on_compacted)
-    hooks.on("compaction_fallback", on_compaction_fallback)
-    hooks.on("completion_rejected", on_completion_rejected)
+    handlers = {
+        "pre_tool": on_pre_tool,
+        "post_tool": on_post_tool,
+        "done": on_done,
+        "cancelled": on_cancelled,
+        "compacted": on_compacted,
+        "compaction_fallback": on_compaction_fallback,
+        "completion_rejected": on_completion_rejected,
+    }
+
+    def on_event(event):
+        handler = handlers.get(event.name)
+        if handler is not None:
+            handler(**event.data)
+
+    hooks.on_event(on_event)

@@ -299,6 +299,20 @@ class CompletionGate:
             and self._mutation_version <= self._validation_version
         )
 
+    def status_summary(self) -> str:
+        """返回给 Agent 状态栏的确定性验收状态。"""
+        changed = self._compute_changed_paths()
+        if not changed:
+            return "not_required"
+        if all(self._is_doc(rel) for rel in changed):
+            return "document_only"
+        effective = max(
+            (self._last_mutation.get(rel, 0) for rel in changed), default=0
+        )
+        if self._validation_version >= effective:
+            return "verified"
+        return "verification_required"
+
     def take_pending_final(self) -> str | None:
         """取走待交付的候选回答（带未验证 footer），没有就返回 None。
 

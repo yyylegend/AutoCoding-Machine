@@ -1,6 +1,6 @@
 # 运行时边界演进计划
 
-状态：待实施。本文记录讨论后的目标，不代表当前代码已经完成重构。
+状态：部分实施。`RuntimeComponents`、`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的第一切片已落地；本文其余目标仍是待实施设计。
 
 当前实现以 [架构说明](../architecture.md) 为准，使用方法以 [README](../../README.md) 为准。
 
@@ -37,6 +37,18 @@ TUI / 未来 Web 入口 / 已有评测
 | 4. 统一执行事件 | 明确模型、工具、确认、完成、失败、取消的事件数据；TUI 与 Trace 消费事件 | 同一执行过程能由界面和评测分别消费，记录不会进入聊天历史 |
 
 权限检查和完成验证属于控制逻辑，不能依赖普通事件监听器是否存在。用户确认结果应通过明确的恢复接口交回执行层。
+
+## 已实施：AgentSession / AgentRun 第一切片
+
+`src/runtime/factory.py` 的 `build_runtime_components()` 统一创建工具、权限、上下文、完成验证、预算和状态栏。CLI 仍创建终端 Hook 和模型适配器，并把 UI 需要的预算元数据传入；Factory 与 CLI 使用同一组组件实例。
+
+`src/runtime/session.py` 现在管理一段对话的 JSONL 派生视图：它保存压缩产物和视图起点，负责用户/技能消息追加、清屏、手动压缩、会话切换和中断回执修复；原始 JSONL 仍不被覆盖。
+
+`src/runtime/run.py` 管理一次任务的启动、取消和 ASK 权限恢复：它重置任务级完成验证状态，在批准或拒绝后统一执行/构造工具结果、触发 `post_tool` Hook、回填消息、追加 JSONL，然后使用同一取消令牌恢复 `MachineLoop`。CLI 只负责收集批准结果。
+
+`src/engine/request_view.py` 集中历史召回和临时状态追加；`src/engine/events.py` 与 `HookManager.on_event()` 提供 typed 执行事件。UI、Trace 和状态栏使用事件流，CompletionGate 等控制策略继续使用兼容 Hook。
+
+本切片没有实现完整的多入口 `AgentSession`；Profile 级组件创建和终端交互仍在 CLI / Runtime 周围。执行轮数仍由 `MachineLoop` 管理，完成证据仍由 `CompletionGate` 管理。typed `AgentEvent` 已覆盖 UI、Trace 和状态栏使用的事件，但尚未统一所有生命周期事件。
 
 ## 状态生命周期
 
