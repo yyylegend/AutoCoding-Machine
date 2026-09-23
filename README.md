@@ -96,9 +96,9 @@ Copy-Item examples/profiles/companion.yaml profile_configs/my-companion.yaml
 
 - [当前架构](docs/architecture.md)：现在有哪些模块，分别负责什么。
 - [交互式架构图](docs/diagrams/README.md)：下载后用浏览器打开，查看整体结构和完成验证流程。
-- [后续需求与计划](docs/plans/README.md)：通用 Profile、架构整理、Goal / Todo 和长上下文优化，均标明实施状态。
+- [后续需求与计划](docs/plans/README.md)：当前主线聚焦可组合 Harness 与适配器；暂缓功能和历史方案见索引。
 
-已完成的设计记录归档在 [docs/archive](docs/archive/)，需要了解历史取舍时再看。
+已完成或暂缓的设计记录归档在 [docs/archive](docs/archive/)，需要了解历史取舍时再看。
 
 修改代码后，可以运行检查：
 

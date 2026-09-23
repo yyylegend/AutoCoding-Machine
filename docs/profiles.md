@@ -29,7 +29,7 @@ load_instructions: true
 
 `/profile` 会列出内置预设和 `profile_configs/` 下有效的 YAML。自定义配置目前必须用路径切换，例如 `/profile profile_configs/my-review.yaml`；YAML 中的 `name` 用于显示和状态目录，尚不支持按该名称查找文件。示例也可以直接按 `examples/profiles/…yaml` 路径试用。
 
-之前的 `companion-demo` 和 `beginner-review` 已移到示例目录；旧会话没有删除，加载原名称的示例仍使用同一状态目录。通用 Profile 的下一版需求见 [规划文档](plans/2026-09-06-universal-profiles.md)，下表描述的是当前可用字段。
+之前的 `companion-demo` 和 `beginner-review` 已移到示例目录；旧会话没有删除，加载原名称的示例仍使用同一状态目录。Profile 作为 Harness 组合配方的后续方向见[模块化 Harness 计划](plans/2026-09-22-modular-harness.md)；下表描述的是当前可用字段。
 
 | 字段 | 含义 |
 | --- | --- |

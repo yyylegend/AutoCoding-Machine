@@ -2,9 +2,9 @@
 
 配套 [交互式架构图](diagrams/README.md) 展示整体结构和完成验证流程；细节与限制以本文和代码为准。
 
-本文描述当前代码实现。下一轮的目标架构见 [架构演进计划](plans/2026-09-05-runtime-boundaries.md)：`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 第一切片已实现；完整多入口会话和更完整的事件迁移仍在计划中。
+本文描述当前代码实现。可复用 Harness 的目标见 [模块化 Harness 计划](plans/2026-09-22-modular-harness.md)；`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的生命周期整理见 [运行时边界基础计划](plans/2026-09-05-runtime-boundaries.md)。完整多入口会话和更完整的事件迁移仍未完成。
 
-未来需求统一放在 [plans 入口](plans/README.md)；通用 Profile、Goal / Todo、长上下文专项优化尚未实现，不能按规划中的接口调用。
+未来方向统一放在 [plans 入口](plans/README.md)。Harness 插件与外部记忆仍是规划目标，不能按规划中的接口调用；长任务与上下文专项优化目前暂缓。
 
 ## 当前结构
 
