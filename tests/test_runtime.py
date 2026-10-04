@@ -8,7 +8,7 @@ from auto_coding_machine.runtime.runtime import AgentRuntime
 
 
 class FakeLoop:
-    def run(self, messages, cancel):
+    def run(self, messages, cancel, **kwargs):
         return {"status": "success", "message_count": len(messages)}
 
 

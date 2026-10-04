@@ -147,6 +147,10 @@ def load_skill_content(skills: list[dict], name: str) -> str | None:
 
 def select_skills(workspace, allowed=None):
     """启动时筛选一次，供清单、搜索、加载三个入口共用。"""
+    if allowed is not None and not allowed:
+        # 明确不使用技能（skills=()）时跳过磁盘扫描，
+        # 业务调用方不必依赖全局或项目技能目录。
+        return []
     skills = discover_skills(workspace)
     if allowed is None:
         return skills

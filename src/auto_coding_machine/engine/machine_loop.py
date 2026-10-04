@@ -243,18 +243,153 @@ class MachineLoop:
         self._finish_status_task()
         return {"status": "failed", "error": "session_write_failed", **result}
 
-    def run(self, messages: list, cancel: CancellationToken) -> dict:
+    def _guard_check(self, messages, turn) -> dict | None:
+        """Guard 检查；返回失败结果，或 None 表示可以继续。"""
+        if self.guard.should_stop(messages, turn):
+            self.hooks.fire("failed", error="guard_stopped", turn=turn)
+            self._finish_status_task()
+            return {"status": "failed", "error": "guard_stopped"}
+        return None
+
+    def _post_tool_event(self, tc: ToolCall, result: ToolResult, *, duration_ms: int, turn: int) -> None:
+        """统一发出 post_tool 事件；自动执行、拒绝和未执行回执都走这里。"""
+        self.hooks.fire("post_tool",
+            tool_name=tc.name, tool_call_id=tc.id,
+            error=result.error, error_type=result.error_type,
+            result_content=result.content,
+            result_metadata=result.metadata,
+            duration_ms=duration_ms, turn=turn)
+
+    def _handle_tool_call(self, tc: ToolCall, turn: int) -> ToolResult | None:
+        """检查并执行单个工具调用。
+
+        返回 ToolResult（执行结果、Hook 拒绝或权限拒绝）；
+        返回 None 表示需要人工审批，permission_required 事件已发出，
+        调用方负责暂停返回并保留同批剩余调用。
+        """
+        # pre_tool 带上 tool_call_id，让前端能把"开始"和"结果"配对
+        self.hooks.fire("pre_tool",
+            tool_name=tc.name, tool_call_id=tc.id,
+            arguments=tc.arguments, turn=turn)
+
+        # 拦截检查和普通权限检查分开，避免破坏现有 PermissionManager。
+        hook_decision = self.hooks.check(
+            "pre_tool",
+            tool_name=tc.name, tool_call_id=tc.id,
+            arguments=tc.arguments, turn=turn,
+        )
+        if hook_decision == "deny":
+            result = ToolResult(
+                tool_call_id=tc.id,
+                content="Hook 检查拒绝了这次操作",
+                error=True,
+                error_type="hook_denied",
+            )
+            self._post_tool_event(tc, result, duration_ms=0, turn=turn)
+            return result
+        if hook_decision == "ask":
+            self.hooks.fire("permission_required",
+                tool_name=tc.name, tool_call_id=tc.id,
+                arguments=tc.arguments, turn=turn)
+            return None
+
+        # 权限检查
+        decision = self.permission.check(tc)
+        if decision == PermissionDecision.DENY:
+            result = ToolResult(
+                tool_call_id=tc.id,
+                content="权限拒绝",
+                error=True,
+                error_type="permission",
+            )
+            self._post_tool_event(tc, result, duration_ms=0, turn=turn)
+            return result
+        if decision == PermissionDecision.ASK:
+            # ASK 需要用户确认，不直接执行
+            self.hooks.fire("permission_required",
+                tool_name=tc.name, tool_call_id=tc.id,
+                arguments=tc.arguments, turn=turn)
+            return None
+
+        # AUTO：自动批准，直接执行工具
+        started_at = time.time()
+        result = self.tools.execute(tc)
+        duration_ms = int((time.time() - started_at) * 1000)
+        self._post_tool_event(tc, result, duration_ms=duration_ms, turn=turn)
+        return result
+
+    def _run_batch(self, messages, calls, turn, cancel) -> dict | None:
+        """按顺序执行一批工具调用；返回 None 表示批次完成。
+
+        返回 dict 表示要直接交给调用方的结果：
+          - permission_required：某个调用等待审批，同批剩余调用随结果带回，
+            恢复后按原顺序继续，已执行的调用不重复执行；
+          - cancelled / session_write_failed：批次中止，未执行调用补明确回执。
+        """
+        for index, tc in enumerate(calls):
+            # 协作式取消：调用之间检查令牌，不再执行后续调用。
+            if cancel.is_cancelled():
+                return self._abort_unexecuted(messages, calls, index, turn)
+            result = self._handle_tool_call(tc, turn)
+            if result is None:
+                # 暂停审批；剩余调用是内部原始 ToolCall，只在恢复路径流转。
+                return {
+                    "status": "permission_required",
+                    "pending_tool_call": tc,
+                    "remaining_tool_calls": list(calls[index + 1:]),
+                    "messages": messages,
+                    "turn": turn,
+                }
+            result_message = result.to_message()
+            messages.append(result_message)
+            if not self._record(result_message):
+                return self._storage_failure(turn, tool_result=result_message)
+        return None
+
+    def _abort_unexecuted(self, messages, calls, index, turn) -> dict:
+        """取消后为尚未执行的调用补“未执行”回执，保持工具回执历史完整。"""
+        for tc in calls[index:]:
+            result = ToolResult(
+                tool_call_id=tc.id,
+                content="任务已取消，本次调用未执行",
+                error=True,
+                error_type="cancelled",
+            )
+            self._post_tool_event(tc, result, duration_ms=0, turn=turn)
+            result_message = result.to_message()
+            messages.append(result_message)
+            if not self._record(result_message):
+                return self._storage_failure(turn, tool_result=result_message)
+        self.hooks.fire("cancelled", message="任务已取消", turn=turn)
+        self._finish_status_task()
+        return {"status": "cancelled"}
+
+    def run(
+        self,
+        messages: list,
+        cancel: CancellationToken,
+        *,
+        start_turn: int = 0,
+        resume_batch: list | None = None,
+    ) -> dict:
         """运行核心循环。
 
         参数：
           messages — 初始对话历史（list of dict）
           cancel   — 取消令牌
+          start_turn   — 本次进入循环的起始轮次。权限暂停恢复时传回暂停时的
+                         轮次，保证一次任务的 max_turns 预算连续计数。
+          resume_batch — 权限暂停后同一模型回复内剩余的工具调用；传列表
+                         （可为空）表示继续上一回合的批次，不再调用模型；
+                         None 表示正常新回合。
 
         返回：
           成功：{"status": "success", "reply": "..."}
           失败：{"status": "failed", "error": "..."}
           取消：{"status": "cancelled"}
           超限：{"status": "failed", "error": "max_turns"}
+          待审批：{"status": "permission_required", "pending_tool_call": ...,
+                   "remaining_tool_calls": [...], "messages": ..., "turn": ...}
 
         大白话流程：
           1. 循环最多 max_turns 轮
@@ -264,11 +399,20 @@ class MachineLoop:
           5. 有 tool_call -> 逐个执行 -> 回填 messages
           6. Guard 检查是否卡死
           7. 继续下一轮
+
+        批次规则（一次回复里的多个 tool_call）：
+          - 按顺序逐个处理，每个调用都有回执或明确的未执行原因；
+          - 某个调用需要审批时暂停，剩余调用随暂停结果一起返回，
+            恢复后按原顺序继续，已执行的调用不会重复执行；
+          - 策略拒绝或用户拒绝只影响当前调用，同批剩余调用继续检查；
+          - 只有取消会中止批次，未执行调用补“未执行”回执。
         """
         if self.status_bar is not None and not self._status_active:
             self.start_task(messages)
 
-        turn = 0
+        turn = start_turn
+        # resume_batch 非 None 即为批次续跑：跳过模型调用，直接执行剩余调用。
+        batch = list(resume_batch) if resume_batch is not None else None
         while turn < self.budget.max_turns:
             # 第 0 步：压缩上下文（如果提供了 context_manager）
             # 压缩真发生时 fire 一个 Hook，让 CLI / DB 能看见——
@@ -292,9 +436,25 @@ class MachineLoop:
 
             # 第 1 步：检查取消
             if cancel.is_cancelled():
+                # 批次续跑进入时已取消：未执行的调用补明确回执，历史保持完整。
+                if batch is not None:
+                    return self._abort_unexecuted(messages, batch, 0, turn)
                 self.hooks.fire("cancelled", message="任务已取消", turn=turn)
                 self._finish_status_task()
                 return {"status": "cancelled"}
+
+            # 批次续跑：权限恢复后继续同一模型回复内剩余的工具调用。
+            # 不重新调用模型，也不重复执行已完成的调用。
+            if batch is not None:
+                outcome = self._run_batch(messages, batch, turn, cancel)
+                batch = None
+                if outcome is not None:
+                    return outcome
+                guard_outcome = self._guard_check(messages, turn)
+                if guard_outcome is not None:
+                    return guard_outcome
+                turn += 1
+                continue
 
             # 第 2 步：调模型（用构造时传入的 model_fn）
             # 上下文超限时的恢复策略：强制压缩一次 → 重试一次。
@@ -405,98 +565,15 @@ class MachineLoop:
             if not self._record(call_message):
                 return self._storage_failure(turn)
 
-            # 第 5 步：逐个执行工具
-            for tc in response.tool_calls:
-                # pre_tool 带上 tool_call_id，让前端能把"开始"和"结果"配对
-                self.hooks.fire("pre_tool",
-                    tool_name=tc.name, tool_call_id=tc.id,
-                    arguments=tc.arguments, turn=turn)
-
-                # 拦截检查和普通权限检查分开，避免破坏现有 PermissionManager。
-                hook_decision = self.hooks.check(
-                    "pre_tool",
-                    tool_name=tc.name, tool_call_id=tc.id,
-                    arguments=tc.arguments, turn=turn,
-                )
-                if hook_decision == "deny":
-                    result = ToolResult(
-                        tool_call_id=tc.id,
-                        content="Hook 检查拒绝了这次操作",
-                        error=True,
-                        error_type="hook_denied",
-                    )
-                    self.hooks.fire("post_tool",
-                        tool_name=tc.name, tool_call_id=tc.id, error=True,
-                        error_type="hook_denied", result_content=result.content,
-                        result_metadata=result.metadata, duration_ms=0, turn=turn)
-                elif hook_decision == "ask":
-                    self.hooks.fire("permission_required",
-                        tool_name=tc.name, tool_call_id=tc.id,
-                        arguments=tc.arguments, turn=turn)
-                    return {
-                        "status": "permission_required",
-                        "pending_tool_call": tc,
-                        "messages": messages,
-                        "turn": turn,
-                    }
-                else:
-                    # 权限检查
-                    decision = self.permission.check(tc)
-                    if decision == PermissionDecision.DENY:
-                        result = ToolResult(
-                            tool_call_id=tc.id,
-                            content="权限拒绝",
-                            error=True,
-                            error_type="permission",
-                        )
-                        self.hooks.fire("post_tool",
-                            tool_name=tc.name, tool_call_id=tc.id, error=True,
-                            error_type="permission", result_content=result.content,
-                            result_metadata=result.metadata, duration_ms=0, turn=turn)
-
-                    elif decision == PermissionDecision.ASK:
-                        # ASK 需要用户确认，不直接执行
-                        self.hooks.fire("permission_required",
-                            tool_name=tc.name, tool_call_id=tc.id,
-                            arguments=tc.arguments, turn=turn)
-                        # 返回暂停状态，由上层 Executor 处理恢复逻辑
-                        return {
-                            "status": "permission_required",
-                            "pending_tool_call": tc,
-                            "messages": messages,
-                            "turn": turn,
-                        }
-                    else:
-                        # AUTO：自动批准，直接执行工具
-                        t0 = time.time()
-                        result = self.tools.execute(tc)
-                        duration_ms = int((time.time() - t0) * 1000)
-                        self.hooks.fire("post_tool",
-                            tool_name=tc.name, tool_call_id=tc.id,
-                            error=result.error, error_type=result.error_type,
-                            result_content=result.content,
-                            result_metadata=result.metadata,
-                            duration_ms=duration_ms, turn=turn)
-
-                # 这里统一追加 Hook 拒绝结果；普通权限分支已在各自分支完成。
-                if hook_decision == "deny":
-                    result_message = result.to_message()
-                    messages.append(result_message)
-                    if not self._record(result_message):
-                        return self._storage_failure(turn, tool_result=result_message)
-                    continue
-
-                # 追加 tool message。三种结果都在这里回填。
-                result_message = result.to_message()
-                messages.append(result_message)
-                if not self._record(result_message):
-                    return self._storage_failure(turn, tool_result=result_message)
+            # 第 5 步：逐个执行工具；每个调用都有回执或明确的未执行原因
+            outcome = self._run_batch(messages, response.tool_calls, turn, cancel)
+            if outcome is not None:
+                return outcome
 
             # 第 6 步：Guard 检查（Phase 2 先简单实现，Phase 3 再补完整）
-            if self.guard.should_stop(messages, turn):
-                self.hooks.fire("failed", error="guard_stopped", turn=turn)
-                self._finish_status_task()
-                return {"status": "failed", "error": "guard_stopped"}
+            guard_outcome = self._guard_check(messages, turn)
+            if guard_outcome is not None:
+                return guard_outcome
 
             turn += 1
 

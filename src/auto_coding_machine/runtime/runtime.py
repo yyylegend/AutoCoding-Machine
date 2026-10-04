@@ -63,10 +63,6 @@ class AgentRuntime:
         """创建一段对话的会话视图与任务创建 module。"""
         return AgentSession(self, store, history, extra_injections)
 
-    def resume(self, messages, cancel):
-        """兼容旧调用方；新调用方使用 AgentRun.resolve_permission()。"""
-        return self.loop.run(messages, cancel)
-
     def set_session_store(self, session_store):
         """切换当前 Session，并同步 Loop 与自动上下文选择器。"""
         self.session_store = session_store

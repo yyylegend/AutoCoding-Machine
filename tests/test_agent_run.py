@@ -14,7 +14,7 @@ class FakeLoop:
     def start_task(self, messages):
         self.started_messages.append(messages)
 
-    def run(self, messages, cancel):
+    def run(self, messages, cancel, **kwargs):
         self.calls.append((messages, cancel))
         return self.results.pop(0)
 

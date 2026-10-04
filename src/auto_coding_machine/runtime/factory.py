@@ -108,7 +108,14 @@ def build_runtime_components(
         guard = GuardManager()
 
     if context_manager is None:
-        context_info = context_info or resolve_context_info(profile.model)
+        if context_info is None:
+            # 显式输入预算不需要窗口元数据；设了 context_budget 的调用方
+            # 可完全离线启动，不探测模型服务。
+            context_info = (
+                {"window": None, "source": "Profile 预算"}
+                if profile.context_budget is not None
+                else resolve_context_info(profile.model)
+            )
         token_budget = (
             token_budget
             if token_budget is not None
@@ -348,7 +355,25 @@ def open_harness_session(
     memory_scope=None,
     on_event=None,
 ):
-    """用默认组装路径打开会话；终端入口可传入已准备好的组件。"""
+    """用默认组装路径打开会话；终端入口可传入已准备好的组件。
+
+    参数：
+      workspace — 工作区目录；模型配置从调用方环境读取。
+      model_fn  — 模型调用函数，(messages) -> AgentResponse。
+      profile   — 可选 Profile；默认 coding。
+      tools     — 可选 ProfileTools 或同协议对象，供调用方注册自定义工具；
+                  与 runtime_components 不能同时提供。
+      resume    — 会话 ID；空字符串恢复最近会话，目标不存在抛 ValueError。
+      session_store — 可选自定义存储（需有 session_id / load / append）；
+                  传入后不使用默认 JSONL，本地历史召回默认关闭。
+      memory_provider / memory_writer / memory_scope — 可选外部记忆；
+                  三者按契约成对提供，不传就是完全离线组合。
+      on_event  — 可选会话级观察回调，收到脱敏 AgentEvent 副本；
+                  返回值不控制执行，回调异常不中断任务。
+
+    错误约定：配置错误抛 ValueError / TypeError，任务不会开始；
+    运行失败不抛异常，通过 Run Result 的 status 返回。
+    """
     if on_event is not None and not callable(on_event):
         raise TypeError("on_event 必须是可调用对象")
     profile = profile or Profile()
