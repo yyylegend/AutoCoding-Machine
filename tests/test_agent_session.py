@@ -1,7 +1,7 @@
 """AgentSession 的会话视图与任务创建 seam 测试。"""
 
-from src.engine.session_store import SessionStore
-from src.runtime.session import AgentSession
+from auto_coding_machine.engine.session_store import SessionStore
+from auto_coding_machine.runtime.session import AgentSession
 
 
 class FakeRuntime:

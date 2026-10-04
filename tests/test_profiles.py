@@ -5,12 +5,12 @@ import json
 
 import pytest
 
-from src.engine import CancellationToken, ContextManager, SessionStore
-from src.engine.contracts import AgentResponse, PermissionDecision, ToolCall
-from src.engine.session_store import open_session
-from src.profiles.config import load_profile
-from src.runtime.factory import create_runtime
-from src.runtime.tools import ProfileTools
+from auto_coding_machine.engine import CancellationToken, ContextManager, SessionStore
+from auto_coding_machine.engine.contracts import AgentResponse, PermissionDecision, ToolCall
+from auto_coding_machine.engine.session_store import open_session
+from auto_coding_machine.profiles.config import load_profile
+from auto_coding_machine.runtime.factory import create_runtime
+from auto_coding_machine.runtime.tools import ProfileTools
 
 
 def call(tool_name, **arguments):
@@ -21,7 +21,7 @@ def call(tool_name, **arguments):
 def isolated_skills(tmp_path, monkeypatch):
     # 不扫描开发者电脑上的真实技能，也不写真实用户记忆。
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "home")
-    monkeypatch.setattr("src.config.settings.settings.MEMORY_ENABLED", True)
+    monkeypatch.setattr("auto_coding_machine.config.settings.settings.MEMORY_ENABLED", True)
 
 
 def test_review_denies_writes_even_with_auto_approve(tmp_path):
@@ -65,7 +65,7 @@ def test_empty_skills_hide_and_disable_skill_tools(tmp_path, selection):
 @pytest.mark.parametrize("query", [None, "", "测试"])
 def test_empty_skill_search_explains_profile_scope(tmp_path, query):
     # 旧入口仍可直接调用工具；空清单不能建议模型反复换关键词。
-    from src.profiles.coding.tools.search_skills import execute
+    from auto_coding_machine.profiles.coding.tools.search_skills import execute
 
     tools = ProfileTools(tmp_path, load_profile("companion"))
     arguments = {} if query is None else {"query": query}
@@ -158,8 +158,8 @@ def test_verify_on_stop_defaults_off_and_can_be_enabled_in_yaml(tmp_path):
 
 
 def test_environment_overrides_profile_verification_setting(tmp_path, monkeypatch):
-    from src.config.settings import settings
-    from src.profiles.coding.completion_gate import CompletionGate
+    from auto_coding_machine.config.settings import settings
+    from auto_coding_machine.profiles.coding.completion_gate import CompletionGate
 
     profile = replace(load_profile("coding"), verify_on_stop=True)
     context_manager = ContextManager(max_tokens=10000)
@@ -197,11 +197,12 @@ def test_invalid_config_fails_before_runtime(tmp_path, config):
 @pytest.mark.parametrize("profile_name", ["review", "companion"])
 def test_cli_selects_profile_and_runs_without_real_model(tmp_path, monkeypatch, profile_name):
     """真正走 CLI 组装与循环，只替换输入和网络，验证命令行参数贯通。"""
-    from src.profiles.coding import cli, llm_adapter
+    from auto_coding_machine.profiles.coding import cli, llm_adapter
+    from auto_coding_machine.runtime import factory
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "profile_token_budget", lambda _, **kwargs: 10000)
-    monkeypatch.setattr(cli, "resolve_context_info", lambda _: {"window": None, "source": "未知"})
+    monkeypatch.setattr(factory, "profile_token_budget", lambda _, **kwargs: 10000)
+    monkeypatch.setattr(factory, "resolve_context_info", lambda _: {"window": None, "source": "未知"})
     monkeypatch.setattr(cli, "create_main_session", lambda *args, **kwargs: None)
     inputs = iter(["你好", "/memory", "/quit"])
     monkeypatch.setattr(cli, "main_input", lambda *args: next(inputs))
@@ -223,9 +224,9 @@ def test_cli_selects_profile_and_runs_without_real_model(tmp_path, monkeypatch, 
 
 
 def test_custom_model_does_not_change_global_adapter(tmp_path, monkeypatch):
-    from src.common.model_adapter import ModelAdapter
-    from src.runtime.context import make_summarizer
-    from src.config.settings import settings
+    from auto_coding_machine.common.model_adapter import ModelAdapter
+    from auto_coding_machine.runtime.context import make_summarizer
+    from auto_coding_machine.config.settings import settings
 
     default_model = settings.CODING_LLM_MODEL
     local = ModelAdapter([], model="local-qwen")
@@ -233,6 +234,6 @@ def test_custom_model_does_not_change_global_adapter(tmp_path, monkeypatch):
     assert ModelAdapter([]).model == default_model
     monkeypatch.setattr(settings, "CONTEXT_SUMMARY_ENABLED", True)
     seen = []
-    monkeypatch.setattr("src.runtime.context.chat", lambda messages, **kwargs: seen.append(kwargs) or "摘要")
+    monkeypatch.setattr("auto_coding_machine.runtime.context.chat", lambda messages, **kwargs: seen.append(kwargs) or "摘要")
     assert make_summarizer(model="local-qwen")([{"role": "user", "content": "你好"}]) == "摘要"
     assert seen[0]["model"] == "local-qwen"

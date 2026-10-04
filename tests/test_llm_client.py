@@ -1,6 +1,6 @@
 from unittest.mock import Mock, patch
 
-from src.common.llm_client import chat
+from auto_coding_machine.common.llm_client import chat
 
 
 def build_response():
@@ -19,7 +19,7 @@ def build_response():
     return response
 
 
-@patch("src.common.llm_client.requests.post")
+@patch("auto_coding_machine.common.llm_client.requests.post")
 def test_single_required_tool_uses_named_choice(post_mock):
     post_mock.return_value = build_response()
     tool = {
@@ -40,7 +40,7 @@ def test_single_required_tool_uses_named_choice(post_mock):
     assert payload["parallel_tool_calls"] is False
 
 
-@patch("src.common.llm_client.requests.post")
+@patch("auto_coding_machine.common.llm_client.requests.post")
 def test_auto_tool_choice_is_preserved(post_mock):
     post_mock.return_value = build_response()
     tool = {

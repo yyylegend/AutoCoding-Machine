@@ -22,25 +22,25 @@ import pytest
 import requests
 from rich.console import Console
 
-from src.common import llm_client
-from src.common.llm_client import ContextLengthExceededError
-from src.engine.contracts import (
+from auto_coding_machine.common import llm_client
+from auto_coding_machine.common.llm_client import ContextLengthExceededError
+from auto_coding_machine.engine.contracts import (
     AgentResponse,
     BudgetPolicy,
     CancellationToken,
     PermissionDecision,
     ToolCall,
 )
-from src.engine.context_manager import EXCERPT_MAX_CHARS, ContextManager
-from src.engine.guard_manager import GuardManager
-from src.engine.hook_manager import HookManager
-from src.engine.machine_loop import MachineLoop
-from src.engine.memory_manager import MemoryManager
-from src.engine.permission_manager import PermissionManager
-from src.engine.session_store import SessionStore, sessions_dir_for
-from src.profiles.coding import llm_adapter as adapter_module
-from src.profiles.coding.llm_adapter import StreamingAdapter
-from src.profiles.coding.tools import CodingTools
+from auto_coding_machine.engine.context_manager import EXCERPT_MAX_CHARS, ContextManager
+from auto_coding_machine.engine.guard_manager import GuardManager
+from auto_coding_machine.engine.hook_manager import HookManager
+from auto_coding_machine.engine.machine_loop import MachineLoop
+from auto_coding_machine.memory.manager import MemoryManager
+from auto_coding_machine.engine.permission_manager import PermissionManager
+from auto_coding_machine.engine.session_store import SessionStore, sessions_dir_for
+from auto_coding_machine.profiles.coding import llm_adapter as adapter_module
+from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
+from auto_coding_machine.profiles.coding.tools import CodingTools
 
 
 # ============================================================

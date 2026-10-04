@@ -16,9 +16,9 @@ from __future__ import annotations
 import unittest
 
 # 导入需要测试的函数和类
-from src.config.settings import settings
-from src.engine.context_manager import ContextManager, assemble
-from src.runtime.context import make_summarizer
+from auto_coding_machine.config.settings import settings
+from auto_coding_machine.engine.context_manager import ContextManager, assemble
+from auto_coding_machine.runtime.context import make_summarizer
 
 
 class TestContextSummary(unittest.TestCase):
@@ -192,7 +192,7 @@ class TestContextSummary(unittest.TestCase):
 
     def test_06_no_summarizer_fn_behaves_like_old_version(self):
         """测试 6：不传 summarizer_fn 时行为与旧版一致。"""
-        from src.engine.context_manager import ContextManager as OldVersionCM
+        from auto_coding_machine.engine.context_manager import ContextManager as OldVersionCM
 
         # 复用现有的 ContextManager 实例（不传 summarizer_fn）就是旧版行为
         messages = self.messages_template(10)  # system + 10 条 = 11 条

@@ -2,10 +2,10 @@
 
 from unittest.mock import Mock, patch
 
-from src.engine import AgentResponse, BudgetPolicy, CancellationToken, MachineLoop
-from src.engine.session_store import SessionStore, sessions_dir_for
-from src.runtime.context_selector import ContextSelector
-from src.runtime.factory import create_coding_runtime
+from auto_coding_machine.engine import AgentResponse, BudgetPolicy, CancellationToken, MachineLoop
+from auto_coding_machine.engine.session_store import SessionStore, sessions_dir_for
+from auto_coding_machine.runtime.context_selector import ContextSelector
+from auto_coding_machine.runtime.factory import create_coding_runtime
 
 
 def test_selector_injects_relevant_history_without_mutating_messages(tmp_path):
@@ -70,6 +70,9 @@ def test_machine_loop_uses_selected_view_without_persisting_injection(tmp_path):
 
 def test_runtime_enables_selector_and_excludes_current_session(tmp_path):
     store = SessionStore(sessions_dir_for(tmp_path), "current-session")
+    old = SessionStore(store.path.parent, "old-session")
+    old.append({"role": "user", "content": "继续处理上下文压缩超时问题"})
+    old.append({"role": "assistant", "content": "目录隔离已生效"})
 
     runtime = create_coding_runtime(
         workspace=tmp_path,
@@ -80,6 +83,8 @@ def test_runtime_enables_selector_and_excludes_current_session(tmp_path):
     selector = runtime.loop.context_selector
     assert isinstance(selector, ContextSelector)
     assert selector.current_session_id == "current-session"
+    selected = selector.select([{"role": "user", "content": "继续看看上下文压缩的超时兜底"}])
+    assert any("目录隔离已生效" in str(message.get("content")) for message in selected)
 
 
 def test_selector_failure_does_not_block_agent_request(tmp_path):
@@ -90,7 +95,7 @@ def test_selector_failure_does_not_block_agent_request(tmp_path):
     selector = ContextSelector(tmp_path)
 
     with patch(
-        "src.runtime.context_selector.search_history",
+        "auto_coding_machine.runtime.context_selector.search_history",
         side_effect=OSError("history unavailable"),
     ):
         selected = selector.select(messages)
@@ -149,7 +154,7 @@ def test_selector_reuses_result_for_same_user_message(tmp_path):
     }
 
     with patch(
-        "src.runtime.context_selector.search_history",
+        "auto_coding_machine.runtime.context_selector.search_history",
         return_value=result,
     ) as search:
         first = selector.select(messages)

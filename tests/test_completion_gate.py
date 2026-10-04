@@ -12,15 +12,15 @@ import io
 
 from rich.console import Console
 
-from src.engine import AgentResponse, BudgetPolicy, CancellationToken, ToolCall
-from src.engine.session_store import SessionStore, sessions_dir_for
-from src.profiles.coding import llm_adapter
-from src.profiles.coding.cli_ui import THEME
-from src.profiles.coding.completion_gate import CompletionGate
-from src.profiles.coding.llm_adapter import StreamingAdapter
-from src.profiles.coding.sandbox import WorkspaceSandbox
-from src.profiles.coding.tools import CodingTools
-from src.runtime.factory import create_coding_runtime
+from auto_coding_machine.engine import AgentResponse, BudgetPolicy, CancellationToken, ToolCall
+from auto_coding_machine.engine.session_store import SessionStore, sessions_dir_for
+from auto_coding_machine.profiles.coding import llm_adapter
+from auto_coding_machine.profiles.coding.cli_ui import THEME
+from auto_coding_machine.profiles.coding.completion_gate import CompletionGate
+from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
+from auto_coding_machine.profiles.coding.sandbox import WorkspaceSandbox
+from auto_coding_machine.profiles.coding.tools import CodingTools
+from auto_coding_machine.runtime.factory import create_coding_runtime
 
 
 # ================================================================

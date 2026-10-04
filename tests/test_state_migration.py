@@ -1,6 +1,6 @@
 """旧 Coding 状态迁移测试：只移动，不覆盖、不丢失。"""
 
-from src.runtime.state import migrate_legacy_coding_state
+from auto_coding_machine.runtime.state import migrate_legacy_coding_state
 
 
 def test_migrate_legacy_coding_state(tmp_path):

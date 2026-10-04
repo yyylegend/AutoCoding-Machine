@@ -1,6 +1,6 @@
 """Agent 状态栏的运行时投影测试。"""
 
-from src.engine import (
+from auto_coding_machine.engine import (
     AgentResponse,
     BudgetPolicy,
     CancellationToken,
@@ -9,12 +9,12 @@ from src.engine import (
     ToolCall,
     ToolResult,
 )
-from src.engine.guard_manager import GuardManager
-from src.engine.session_store import SessionStore, sessions_dir_for
-from src.profiles.config import Profile
-from src.runtime.factory import create_runtime
-from src.runtime.run import AgentRun
-from src.runtime.status import AgentStatusBar
+from auto_coding_machine.engine.guard_manager import GuardManager
+from auto_coding_machine.engine.session_store import SessionStore, sessions_dir_for
+from auto_coding_machine.profiles.config import Profile
+from auto_coding_machine.runtime.factory import create_runtime
+from auto_coding_machine.runtime.run import AgentRun
+from auto_coding_machine.runtime.status import AgentStatusBar
 
 
 def test_status_is_ephemeral_and_updates_after_tool_call(tmp_path):

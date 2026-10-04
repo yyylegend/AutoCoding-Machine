@@ -1,6 +1,7 @@
-"""统一入口：python -m src --profile coding。"""
+"""Compatibility entry point; prefer ``python -m auto_coding_machine``."""
 
-from src.profiles.coding.cli import main
+from auto_coding_machine.__main__ import main
+
 
 if __name__ == "__main__":
     main()

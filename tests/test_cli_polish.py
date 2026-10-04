@@ -12,9 +12,9 @@ from pathlib import Path
 
 from prompt_toolkit.document import Document
 
-from src.engine import SessionStore
-from src.engine import repair_dangling_tool_results
-from src.profiles.coding.cli_input import SlashCompleter
+from auto_coding_machine.engine import SessionStore
+from auto_coding_machine.engine import repair_dangling_tool_results
+from auto_coding_machine.profiles.coding.cli_input import SlashCompleter
 
 
 def _make_completer(sessions=None):
@@ -133,7 +133,7 @@ class TestRepairDanglingToolResults(unittest.TestCase):
         }
 
     def test_repairs_missing_tool_result(self):
-        """悬空的 tool_calls 应补一条 cancelled 回执。"""
+        """悬空调用只能标为执行状态未知，不能鼓励重复执行。"""
         store = SessionStore(self.dir, "s1")
         store.append({"role": "user", "content": "读一下"})
         store.append(self._assistant_tool_call("call_1"))
@@ -145,6 +145,8 @@ class TestRepairDanglingToolResults(unittest.TestCase):
         history = store.load()
         self.assertEqual(history[-1]["role"], "tool")
         self.assertEqual(history[-1]["tool_call_id"], "call_1")
+        self.assertIn("执行状态未知", history[-1]["content"])
+        self.assertIn("不要直接重试", history[-1]["content"])
 
     def test_no_repair_when_paired(self):
         """配对完整的历史不应被改动（返回 0）。"""

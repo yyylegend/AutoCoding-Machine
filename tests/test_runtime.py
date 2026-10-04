@@ -1,7 +1,7 @@
 """Runtime 注册表和统一消息组装测试。"""
 
-from src.runtime.registry import RuntimeContext, RuntimeRegistry
-from src.runtime.runtime import AgentRuntime
+from auto_coding_machine.runtime.registry import RuntimeContext, RuntimeRegistry
+from auto_coding_machine.runtime.runtime import AgentRuntime
 
 
 # 兼容性导出：factory 仍可导入 MarkdownMemoryExtension。
@@ -35,7 +35,7 @@ def test_registry_rejects_duplicate_injection():
 
 
 def test_markdown_memory_extension_accepts_provider():
-    from src.runtime.factory import MarkdownMemoryExtension
+    from auto_coding_machine.runtime.factory import MarkdownMemoryExtension
 
     class Provider:
         def build_injection(self, context):
@@ -94,7 +94,7 @@ def test_runtime_extra_injection_is_not_persisted_in_registry():
 
 
 def test_cost_command_reports_token_totals():
-    from src.profiles.coding.commands.cost import handle_cost
+    from auto_coding_machine.profiles.coding.commands.cost import handle_cost
 
     class FakeConsole:
         def __init__(self):
@@ -118,7 +118,7 @@ def test_cost_command_reports_token_totals():
 
 
 def test_display_commands_delegate_to_renderers(monkeypatch):
-    from src.profiles.coding.commands import memory, prompt, sessions, skills
+    from auto_coding_machine.profiles.coding.commands import memory, prompt, sessions, skills
 
     calls = []
     monkeypatch.setattr(skills, "print_skills", lambda value: calls.append(("skills", value)))
@@ -132,7 +132,7 @@ def test_display_commands_delegate_to_renderers(monkeypatch):
 
 
 def test_help_command_calls_help_renderer(monkeypatch):
-    import src.profiles.coding.commands.help as help_command
+    import auto_coding_machine.profiles.coding.commands.help as help_command
 
     called = []
     monkeypatch.setattr(help_command, "print_help", lambda: called.append(True))

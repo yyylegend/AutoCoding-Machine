@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from src.engine import (
+from auto_coding_machine.engine import (
     AgentResponse,
     BudgetPolicy,
     CancellationToken,
@@ -22,6 +22,7 @@ from src.engine import (
     HookManager,
     MachineLoop,
     PermissionManager,
+    PermissionDecision,
     SessionStore,
     ToolCall,
     latest_session_id,
@@ -80,6 +81,17 @@ class TestSessionStore(unittest.TestCase):
         history = store2.load()
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["content"], "第一条")
+
+    def test_append_after_broken_line_keeps_new_message_readable(self):
+        """上次只写出半行时，新回执仍应占独立一行。"""
+        store = SessionStore(self.dir, "broken-then-recovered")
+        store.append({"role": "user", "content": "原始问题"})
+        with open(store.path, "a", encoding="utf-8") as stream:
+            stream.write('{"role": "tool"')
+
+        store.append({"role": "tool", "tool_call_id": "call-1", "content": "状态未知"})
+
+        self.assertEqual(store.load()[-1]["content"], "状态未知")
 
     def test_chinese_saved_as_readable_text(self):
         """中文直接明文保存（ensure_ascii=False），文件人类可读。"""
@@ -148,7 +160,7 @@ class TestMachineLoopWithSessionStore(unittest.TestCase):
         (self.root / "test.txt").write_text("hello world", encoding="utf-8")
 
         # 用真工具（read_file 是 AUTO 权限，不会被拦）
-        from src.profiles.coding.tools import CodingTools
+        from auto_coding_machine.profiles.coding.tools import CodingTools
         self.tools = CodingTools(self.root, max_output_chars=100)
         self.store = SessionStore(self.root / "sessions", "run-1")
 
@@ -222,6 +234,60 @@ class TestMachineLoopWithSessionStore(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertFalse((self.root / "sessions").exists())
 
+    def test_auto_tool_stops_when_its_result_cannot_be_saved(self):
+        """自动工具的副作用发生后，也不能把未保存的结果当作成功。"""
+        original_append = self.store.append
+
+        def fail_tool_result(message):
+            if message["role"] == "tool":
+                raise OSError("磁盘不可写")
+            original_append(message)
+
+        self.store.append = fail_tool_result
+        model_calls = []
+        tool_calls = []
+
+        class Tools:
+            def execute(self, call):
+                tool_calls.append(call)
+                from auto_coding_machine.engine import ToolResult
+                return ToolResult(call.id, "已经执行")
+
+        def model_fn(messages):
+            model_calls.append(messages)
+            return AgentResponse(tool_calls=[ToolCall("call-1", "write_file", {})])
+
+        loop = MachineLoop(
+            model_fn=model_fn,
+            tools=Tools(),
+            permission=Mock(check=lambda _call: PermissionDecision.AUTO),
+            guard=GuardManager(),
+            budget=BudgetPolicy(max_turns=3),
+            final_verifier=lambda _messages, response: response.done,
+            hooks=HookManager(),
+            session_store=self.store,
+        )
+
+        result = loop.run([{"role": "user", "content": "修改文件"}], CancellationToken())
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "session_write_failed")
+        self.assertEqual(result["tool_result"]["content"], "已经执行")
+        self.assertEqual(len(tool_calls), 1)
+        self.assertEqual(len(model_calls), 1)
+        self.assertEqual([m["role"] for m in self.store.load()], ["assistant"])
+
+    def test_final_reply_is_not_reported_saved_when_append_fails(self):
+        def fail_append(_message):
+            raise OSError("磁盘不可写")
+
+        self.store.append = fail_append
+        result = self._run_loop(lambda _messages: AgentResponse(content="完成", done=True))
+
+        self.assertEqual(result, {
+            "status": "failed", "error": "session_write_failed", "reply": "完成",
+        })
+
 
 # ============================================================
 # 3. open_session 纯函数测试（CLI 的 --resume 逻辑）
@@ -237,7 +303,7 @@ class TestOpenSession(unittest.TestCase):
 
     def test_no_resume_starts_fresh(self):
         """resume=None → 新会话，history 为空，无报错。"""
-        from src.engine.session_store import open_session
+        from auto_coding_machine.engine.session_store import open_session
         store, history, error = open_session(self.dir, None)
         self.assertIsNone(error)
         self.assertEqual(history, [])
@@ -245,7 +311,7 @@ class TestOpenSession(unittest.TestCase):
 
     def test_resume_latest_picks_newest(self):
         """resume=""（--resume 不带值）→ 恢复 mtime 最新的会话。"""
-        from src.engine.session_store import open_session
+        from auto_coding_machine.engine.session_store import open_session
         a = SessionStore(self.dir, "a")
         a.append({"role": "user", "content": "旧"})
         b = SessionStore(self.dir, "b")
@@ -260,14 +326,14 @@ class TestOpenSession(unittest.TestCase):
 
     def test_resume_latest_with_no_sessions_errors(self):
         """resume="" 但一个会话都没有 → 给出清晰报错。"""
-        from src.engine.session_store import open_session
+        from auto_coding_machine.engine.session_store import open_session
         store, history, error = open_session(self.dir, "")
         self.assertIsNone(store)
         self.assertIsNotNone(error)
 
     def test_resume_specific_id(self):
         """resume=<id> → 恢复指定会话。"""
-        from src.engine.session_store import open_session
+        from auto_coding_machine.engine.session_store import open_session
         s = SessionStore(self.dir, "target")
         s.append({"role": "user", "content": "指定的会话"})
         store, history, error = open_session(self.dir, "target")
@@ -277,7 +343,7 @@ class TestOpenSession(unittest.TestCase):
 
     def test_resume_missing_id_errors(self):
         """resume=<不存在的 id> → 报错而不是静默新开。"""
-        from src.engine.session_store import open_session
+        from auto_coding_machine.engine.session_store import open_session
         store, history, error = open_session(self.dir, "ghost")
         self.assertIsNone(store)
         self.assertIn("ghost", error)
@@ -295,7 +361,7 @@ class TestContextManagerWiring(unittest.TestCase):
     """
 
     def setUp(self):
-        from src.runtime import context as context_setup
+        from auto_coding_machine.runtime import context as context_setup
         self.context_setup = context_setup
         # 替换预算解析入口，避免测试发真实网络请求。
         from unittest.mock import patch
@@ -305,7 +371,7 @@ class TestContextManagerWiring(unittest.TestCase):
 
     def test_has_both_token_budget_and_summarizer(self):
         """摘要开关开启时：max_tokens 和 summarizer_fn 都不为空。"""
-        from src.config.settings import settings
+        from auto_coding_machine.config.settings import settings
         original = settings.CONTEXT_SUMMARY_ENABLED
         settings.CONTEXT_SUMMARY_ENABLED = True
         try:
@@ -318,7 +384,7 @@ class TestContextManagerWiring(unittest.TestCase):
 
     def test_summary_disabled_falls_back_to_truncate(self):
         """摘要开关关闭时：summarizer_fn 为 None（纯截断），预算仍在。"""
-        from src.config.settings import settings
+        from auto_coding_machine.config.settings import settings
         original = settings.CONTEXT_SUMMARY_ENABLED
         settings.CONTEXT_SUMMARY_ENABLED = False
         try:
@@ -338,8 +404,8 @@ class TestContextBudgetResolution(unittest.TestCase):
     """上下文窗口解析与安全预算计算。"""
 
     def setUp(self):
-        from src.config.settings import settings
-        from src.runtime import context as context_setup
+        from auto_coding_machine.config.settings import settings
+        from auto_coding_machine.runtime import context as context_setup
 
         self.settings = settings
         self.context_setup = context_setup
@@ -398,13 +464,13 @@ class TestContextBudgetResolution(unittest.TestCase):
     def test_provider_accepts_common_context_length_field(self):
         from unittest.mock import patch
 
-        from src.common.llm_client import fetch_model_context_window
+        from auto_coding_machine.common.llm_client import fetch_model_context_window
 
         response = Mock(ok=True)
         response.json.return_value = {
             "data": [{"id": "demo-model", "context_length": "65536"}],
         }
-        with patch("src.common.llm_client.requests.get", return_value=response):
+        with patch("auto_coding_machine.common.llm_client.requests.get", return_value=response):
             length = fetch_model_context_window(
                 base_url="https://example.com/v1",
                 api_key="test-key",

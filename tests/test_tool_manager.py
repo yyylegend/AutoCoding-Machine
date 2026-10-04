@@ -14,11 +14,11 @@ import types
 import unittest
 from pathlib import Path
 
-from src.engine.contracts import PermissionDecision, ToolCall
-from src.engine.permission_manager import PermissionManager
-from src.engine.tool_manager import ToolManager, tool
-from src.profiles.coding.sandbox import WorkspaceSandbox
-from src.profiles.coding.tools import read_file, write_file
+from auto_coding_machine.engine.contracts import PermissionDecision, ToolCall
+from auto_coding_machine.engine.permission_manager import PermissionManager
+from auto_coding_machine.engine.tool_manager import ToolManager, tool
+from auto_coding_machine.profiles.coding.sandbox import WorkspaceSandbox
+from auto_coding_machine.profiles.coding.tools import read_file, write_file
 
 
 def _make_legacy_module():
@@ -30,7 +30,7 @@ def _make_legacy_module():
     """
     def execute(tool_call, sandbox, max_output_chars):
         # 假工具：什么都不做，回显一句话
-        from src.engine.contracts import ToolResult
+        from auto_coding_machine.engine.contracts import ToolResult
         return ToolResult(tool_call_id=tool_call.id, content="legacy ok")
 
     def schema():

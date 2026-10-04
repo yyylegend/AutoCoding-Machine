@@ -2,7 +2,7 @@
 
 import unittest
 
-from src.engine.context_manager import ContextManager, count_tokens
+from auto_coding_machine.engine.context_manager import ContextManager, count_tokens
 
 
 class TestContextManager(unittest.TestCase):

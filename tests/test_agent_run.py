@@ -1,8 +1,8 @@
 """AgentRun 的任务生命周期 seam 测试。"""
 
-from src.engine import CancellationToken, HookManager, ToolCall, ToolResult
-from src.engine.session_store import SessionStore
-from src.runtime.run import AgentRun
+from auto_coding_machine.engine import CancellationToken, HookManager, ToolCall, ToolResult
+from auto_coding_machine.engine.session_store import SessionStore
+from auto_coding_machine.runtime.run import AgentRun
 
 
 class FakeLoop:
@@ -34,6 +34,15 @@ class FakeTools:
     def execute(self, tool_call):
         self.calls.append(tool_call)
         return ToolResult(tool_call.id, "工具执行成功")
+
+
+class FailingSessionStore:
+    def __init__(self):
+        self.messages = []
+
+    def append(self, message):
+        self.messages.append(message)
+        raise OSError("磁盘暂时不可写")
 
 
 def test_agent_run_approves_tool_and_resumes_with_same_task_state(tmp_path):
@@ -72,6 +81,52 @@ def test_agent_run_approves_tool_and_resumes_with_same_task_state(tmp_path):
     assert store.load() == [messages[-1]]
     assert seen[0]["tool_name"] == "write_file"
     assert seen[0]["turn"] == 2
+
+
+def test_agent_run_stops_with_tool_result_when_session_write_fails():
+    messages = [{"role": "user", "content": "修改 a.py"}]
+    call = ToolCall(id="call-1", name="write_file", arguments={"path": "a.py"})
+    pending = {
+        "status": "permission_required",
+        "pending_tool_call": call,
+        "messages": messages,
+        "turn": 2,
+    }
+    loop = FakeLoop([pending, {"status": "success", "reply": "继续完成"}])
+    tools = FakeTools()
+    store = FailingSessionStore()
+    run = AgentRun(
+        loop,
+        tools,
+        HookManager(),
+        store,
+        FakeGate(),
+        messages,
+        CancellationToken(),
+    )
+
+    run.start()
+    result = run.resolve_permission(approved=True)
+
+    assert result["status"] == "failed"
+    assert result["error"] == "session_write_failed"
+    assert result["tool_result"] == {
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": "工具执行成功",
+    }
+    assert tools.calls == [call]
+    assert len(loop.calls) == 1  # 写盘失败后不能继续调用模型或执行更多工具。
+    assert run.result is result
+    assert "permission_request" not in result
+    assert store.messages == [messages[-1]]
+    try:
+        run.resolve_permission(approved=True)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("同一工具不能重复执行")
+    assert tools.calls == [call]
 
 
 def test_agent_run_reports_denied_tool_to_model_without_executing_it(tmp_path):

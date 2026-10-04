@@ -2,12 +2,17 @@
 .venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .autocoding/
 .scratch/
 .workbuddy/
 .idea/
 .vscode/
+.kilo/
+# 本机使用的 Codex 指令和会话交接记录，不提交到仓库。
+/AGENTS.md
+/HANDOFF.md
 # Archify 浏览器检查生成的本地截图和报告；保留正式 HTML 与 JSON 源文件。
 docs/diagrams/*.visual-check.*
 # 面试讲解稿只留本地，不随项目文档发布。

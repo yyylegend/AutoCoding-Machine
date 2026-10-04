@@ -9,7 +9,7 @@
 
 import pytest
 
-from src.engine.memory_manager import MemoryManager
+from auto_coding_machine.memory.manager import MemoryManager
 
 
 @pytest.fixture

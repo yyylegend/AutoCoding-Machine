@@ -5,7 +5,7 @@
 
 import unittest
 
-from src.engine.contracts import (
+from auto_coding_machine.engine.contracts import (
     AgentResponse,
     BudgetPolicy,
     CancellationToken,
@@ -61,11 +61,9 @@ class TestEngineContracts(unittest.TestCase):
             content="path outside workspace",
             error=True,
             error_type="permission",
-            retryable=False,
         )
         self.assertTrue(result.error)
         self.assertEqual(result.error_type, "permission")
-        self.assertFalse(result.retryable)
 
     def test_permission_decision_values(self):
         self.assertEqual(PermissionDecision.AUTO.value, "auto")

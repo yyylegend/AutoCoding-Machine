@@ -6,11 +6,11 @@ from unittest.mock import Mock
 import pytest
 import tiktoken
 
-from src.common import token_utils
-from src.common.llm_client import fetch_model_context_window
-from src.config.settings import settings
-from src.profiles.config import load_profile
-from src.runtime import context
+from auto_coding_machine.common import token_utils
+from auto_coding_machine.common.llm_client import fetch_model_context_window
+from auto_coding_machine.config.settings import settings
+from auto_coding_machine.profiles.config import load_profile
+from auto_coding_machine.runtime import context
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +55,7 @@ def test_context_manager_keeps_its_model_and_counts_tool_overhead(monkeypatch):
 def test_provider_rejects_invalid_window(monkeypatch, value):
     response = Mock(ok=True)
     response.json.return_value = {"data": [{"id": "target", "context_length": value}]}
-    monkeypatch.setattr("src.common.llm_client.requests.get", lambda *a, **k: response)
+    monkeypatch.setattr("auto_coding_machine.common.llm_client.requests.get", lambda *a, **k: response)
     assert fetch_model_context_window(base_url="https://example.com/v1/", model="target") is None
 
 
@@ -70,7 +70,7 @@ def test_llama_uses_deployed_context_not_training_window(monkeypatch):
         requests.append((url, kwargs))
         return props if url.endswith("/props") else models
 
-    monkeypatch.setattr("src.common.llm_client.requests.get", get)
+    monkeypatch.setattr("auto_coding_machine.common.llm_client.requests.get", get)
     assert fetch_model_context_window(base_url="http://localhost:8080/v1/", model="qwen-local") == 8192
     assert requests[-1][0] == "http://localhost:8080/props"
     assert requests[-1][1]["params"] == {"model": "qwen-local"}
@@ -79,7 +79,7 @@ def test_llama_uses_deployed_context_not_training_window(monkeypatch):
 def test_other_model_metadata_is_not_used(monkeypatch):
     response = Mock(ok=True)
     response.json.return_value = {"data": [{"id": "other", "context_length": 1000000}]}
-    monkeypatch.setattr("src.common.llm_client.requests.get", lambda *a, **k: response)
+    monkeypatch.setattr("auto_coding_machine.common.llm_client.requests.get", lambda *a, **k: response)
     assert fetch_model_context_window(model="target") is None
 
 
@@ -104,7 +104,7 @@ def test_window_refresh_does_not_reuse_old_model_settings(monkeypatch):
 
 
 def test_missing_usage_is_not_reported_as_zero():
-    from src.profiles.coding.llm_adapter import StreamingAdapter
+    from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
 
     adapter = StreamingAdapter([], Mock(), {})
     adapter._update_metrics({"usage": {"prompt_tokens": 12, "completion_tokens": 8}})
@@ -120,8 +120,8 @@ def test_missing_usage_is_not_reported_as_zero():
 
 
 def test_missing_usage_is_visible_in_cost():
-    from src.profiles.coding.commands.cost import handle_cost
-    from src.profiles.coding.llm_adapter import StreamingAdapter
+    from auto_coding_machine.profiles.coding.commands.cost import handle_cost
+    from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
 
     console = Mock()
     adapter = StreamingAdapter([], console, {})
@@ -136,8 +136,8 @@ def test_status_distinguishes_window_source_and_last_request():
     from io import StringIO
     from types import SimpleNamespace
     from rich.console import Console
-    from src.profiles.coding.commands.status import handle_status
-    from src.profiles.coding.llm_adapter import StreamingAdapter
+    from auto_coding_machine.profiles.coding.commands.status import handle_status
+    from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
 
     output = StringIO()
     console = Console(file=output, width=160, color_system=None)
@@ -161,5 +161,5 @@ def test_llama_props_failure_does_not_use_training_window(monkeypatch):
     models = Mock(ok=True)
     models.json.return_value = {"data": [{"id": "qwen", "meta": {"n_ctx_train": 131072}}]}
     props = Mock(ok=False)
-    monkeypatch.setattr("src.common.llm_client.requests.get", lambda url, **kw: props if url.endswith('/props') else models)
+    monkeypatch.setattr("auto_coding_machine.common.llm_client.requests.get", lambda url, **kw: props if url.endswith('/props') else models)
     assert fetch_model_context_window(base_url="http://localhost:8080/v1", model="qwen") is None

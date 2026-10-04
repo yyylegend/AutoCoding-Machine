@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.engine.contracts import ToolCall
-from src.profiles.coding.tools.helpers import clip_text
+from auto_coding_machine.engine.contracts import ToolCall
+from auto_coding_machine.profiles.coding.tools.helpers import clip_text
 
 
 # =====================================
@@ -82,7 +82,7 @@ class TestRecallHistory(unittest.TestCase):
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
         # 构造 CodingTools（需要 settings，但 recall_history 不依赖 LLM）
-        from src.profiles.coding.tools import CodingTools
+        from auto_coding_machine.profiles.coding.tools import CodingTools
         self.tools = CodingTools(self.root, max_output_chars=5000)
 
     def tearDown(self):
@@ -120,7 +120,7 @@ class TestRecallHistory(unittest.TestCase):
         # 不调 setUp，直接造临时工作区但没有 sessions 目录
         tmp = tempfile.TemporaryDirectory()
         root = Path(tmp.name)
-        from src.profiles.coding.tools import CodingTools
+        from auto_coding_machine.profiles.coding.tools import CodingTools
         tools = CodingTools(root, max_output_chars=5000)
 
         result = tools.execute(self._call(query="zzz"))

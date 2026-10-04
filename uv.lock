@@ -9,7 +9,7 @@ resolution-markers = [
 [[package]]
 name = "auto-coding-machine"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "filelock" },
     { name = "prompt-toolkit" },
