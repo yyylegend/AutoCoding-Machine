@@ -372,7 +372,8 @@ def open_harness_session(
                   返回值不控制执行，回调异常不中断任务。
 
     错误约定：配置错误抛 ValueError / TypeError，任务不会开始；
-    运行失败不抛异常，通过 Run Result 的 status 返回。
+    循环已分类的失败通过 Run Result 的 status 返回；
+    模型或自定义组件中未被处理的异常向调用方抛出。
     """
     if on_event is not None and not callable(on_event):
         raise TypeError("on_event 必须是可调用对象")

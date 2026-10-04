@@ -225,7 +225,9 @@ session = open_harness_session(
 
 - **配置错误**在打开会话时抛异常（`ValueError` / `TypeError`）：Profile YAML 非法、`on_event` 不可调用、`tools` 与 `runtime_components` 同时提供等。任务不会开始。
 - **调用方式错误**在运行中抛 `RuntimeError`：重复 `start()`、没有等待中的请求却调用 `resolve_permission()`、重复提交已消费的权限决定。
-- **运行失败**不抛异常，通过 `result["status"] == "failed"` 返回；`error` 取值包括 `max_turns`、`session_write_failed`、`verification_required`、`guard_stopped`、`no_tool_call`。
+- **循环已分类的失败**通过 `result["status"] == "failed"` 返回；`error` 取值包括 `max_turns`、`session_write_failed`、`verification_required`、`guard_stopped`、`no_tool_call`。
+
+模型连接错误、HTTP 错误及自定义组件中未被处理的异常直接向调用方抛出。调用方应在 `run.start()` 和 `run.resolve_permission()` 的调用边界处理这些异常；此时不保证已经设置 `run.result` 或发出终止事件。上下文超限使用循环明确支持的压缩与一次重试路径。公共事件观察回调和可选记忆服务的失败处理见各自约定。
 
 事件顺序遵守以下约定（详见 [ADR 0001](adr/0001-harness-event-contract.md)）：
 
