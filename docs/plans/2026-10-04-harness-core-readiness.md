@@ -74,8 +74,10 @@
 
 ### 验收
 
-- `tests/test_task_lifecycle.py`、`tests/test_order_assistant_example.py` 及相邻套件全绿；`uv run pytest -q`：466 passed（2026-10-04，含并行 CLI 改版的测试）。
-- `git diff --check` 通过；文档本地链接检查 97 条无断链；wheel 干净环境验证（Windows + WSL）通过。
+- `tests/test_task_lifecycle.py`、`tests/test_order_assistant_example.py`、`tests/test_release_boundaries.py` 及相邻套件通过；Windows 与 WSL 完整测试均为 471 passed，另有 2 个压缩预算子用例通过（2026-10-04，包含 CLI 展示测试）。
+- 审批恢复期间保留未完成的工具批次，批次结束后再压缩；最新批次超过消息数量或 Token 预算时，保留完整调用声明和回执。最后一个工具完成后的取消返回 `cancelled`；工具回执持久化失败仍优先返回 `session_write_failed`。
+- 订单示例 `--live` 通过已注册业务工具的 Schema 创建 `ModelAdapter`；接线测试验证模型和执行器使用同一工具定义。
+- `git diff --check` 通过；文档本地链接检查 101 条无断链；wheel 和 sdist 排除私有配置及会话数据。Windows 干净环境普通安装 wheel 后，公共包来自 site-packages，订单示例的本地演示任务返回 `success`；WSL 独立安装验证见前述记录。真实模型质量评估未包含在本轮验收中。
 
 ## 不在本轮
 

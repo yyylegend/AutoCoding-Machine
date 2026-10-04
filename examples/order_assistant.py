@@ -150,7 +150,7 @@ def demo_model(messages) -> AgentResponse:
     return AgentResponse(content="草稿已保存，未发送任何消息。", done=True)
 
 
-def build_session(workspace, *, model_fn=None, on_event=None):
+def build_session(workspace, *, model_fn=None, on_event=None, live=False):
     """按业务 Profile 和自定义工具组装会话；复用公共入口，不触碰内部循环。"""
     profile = Profile(
         name="orders",
@@ -164,6 +164,8 @@ def build_session(workspace, *, model_fn=None, on_event=None):
     tools = ProfileTools(workspace, profile)
     tools.register(QueryOrderTool)
     tools.register(SaveReplyDraftTool)
+    if live and model_fn is None:
+        model_fn = ModelAdapter(tools.get_schemas(), model=profile.model).call
     return open_harness_session(
         workspace,
         model_fn or demo_model,
@@ -173,9 +175,9 @@ def build_session(workspace, *, model_fn=None, on_event=None):
     )
 
 
-def run_order_task(workspace, question, *, model_fn=None, on_event=None, approve=True):
+def run_order_task(workspace, question, *, model_fn=None, on_event=None, approve=True, live=False):
     """运行一次订单任务；approve=False 时把权限暂停原样交给宿主决定。"""
-    session = build_session(workspace, model_fn=model_fn, on_event=on_event)
+    session = build_session(workspace, model_fn=model_fn, on_event=on_event, live=live)
     run = session.begin_run(question)
     result = run.start()
     while result.get("status") == "permission_required":
@@ -216,16 +218,9 @@ def main() -> int:
         else:
             print(f"[事件] {event.name}")
 
-    model_fn = None
-    if args.live:
-        profile = Profile(name="orders", kind="review", tools=(), skills=(),
-                          load_instructions=False, context_budget=8000,
-                          prompt=BUSINESS_PROMPT)
-        model_fn = ModelAdapter([], model=profile.model).call
-
     result = run_order_task(
         args.workspace, args.question,
-        model_fn=model_fn, on_event=observe,
+        live=args.live, on_event=observe,
     )
 
     print(f"\n状态：{result['status']}")

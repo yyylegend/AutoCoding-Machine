@@ -42,6 +42,8 @@ src/__main__.py      # 兼容旧的 python -m src 命令
 
 目前已有第一切片的 `AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent`，但它们不替代 `MachineLoop`。`AgentSession` 保留 JSONL 作为原始事实源，管理压缩和清屏后的进程内视图；`AgentRun` 持有一次任务的消息、取消令牌和待确认工具，并在确认后统一触发事件、回填消息、写入 Session 再恢复循环。同一模型回复内的多个工具调用按顺序成批处理：某个调用等待审批时，同批剩余调用随暂停结果保存，恢复后按原顺序继续，已执行的调用不重复执行；用户拒绝只影响当前调用，剩余调用继续各自的权限检查；只有取消会中止批次，未执行调用补明确的「未执行」回执。取消是协作式取消：等待审批期间取消后，随后到达的批准也不执行工具，已发生的副作用不会被撤回。`RequestView` 负责历史召回和临时状态追加；旧的按名称 Hook 仍保留给 CompletionGate 等控制策略。`ToolEnvironment` 仍继承 `WorkspaceSandbox`。
 
+审批恢复时，未完成的工具批次执行完毕后再进行上下文压缩。最新工具批次超过消息数量或 Token 预算时，调用声明及其回执一起保留，避免产生孤立的工具结果。最后一个工具完成后收到取消请求，任务返回 `cancelled`；回执写入失败仍返回 `session_write_failed`。
+
 ## Profiles 与共享模块
 
 `python -m auto_coding_machine --profile <名称或YAML路径>` 在启动时读取不可变 Profile。`python -m src` 暂时保留为兼容入口。配置解析拒绝未知字段、非法名称和超出类型范围的工具；TUI 的 `/profile` 在输入空闲时结束旧会话循环，重新组装 Profile 并开新会话；不在运行中的循环内替换组件，也不支持动态 Python 插件。

@@ -502,7 +502,7 @@ class ContextManager:
           start    — 初始切分位置（从这里往后找）
 
         返回：
-          安全切分位置（>= start）
+          安全切分位置；最新工具批次超过预算时向前保留完整批次。
         """
         i = start
         while i < len(messages):
@@ -522,5 +522,7 @@ class ContextManager:
             # 找到安全边界：user 或不带 tool_calls 的 assistant
             return i
 
-        # 如果找到末尾都没找到安全点，就保留全部
+        # 最新工具批次不能拆开；保留调用声明及其全部回执。
+        while start > 0 and messages[start].get("role") == "tool":
+            start -= 1
         return start

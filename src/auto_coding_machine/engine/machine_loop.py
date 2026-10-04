@@ -344,6 +344,8 @@ class MachineLoop:
             messages.append(result_message)
             if not self._record(result_message):
                 return self._storage_failure(turn, tool_result=result_message)
+        if cancel.is_cancelled():
+            return self._abort_unexecuted(messages, calls, len(calls), turn)
         return None
 
     def _abort_unexecuted(self, messages, calls, index, turn) -> dict:
@@ -417,7 +419,7 @@ class MachineLoop:
             # 第 0 步：压缩上下文（如果提供了 context_manager）
             # 压缩真发生时 fire 一个 Hook，让 CLI / DB 能看见——
             # 不然用户被"失忆"了都不知道是压缩干的
-            if self.context_manager is not None:
+            if self.context_manager is not None and batch is None:
                 before_count = len(messages)
                 messages = self.context_manager.maybe_compact(messages)
                 if len(messages) < before_count:

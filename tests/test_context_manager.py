@@ -46,6 +46,25 @@ class TestContextManager(unittest.TestCase):
         self.assertGreater(tokens, 0)
         self.assertLess(tokens, 10)
 
+    def test_compact_preserves_latest_tool_batch_when_it_exceeds_limit(self):
+        messages = [
+            {"role": "user", "content": "查询四个订单"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": f"q-{i}", "type": "function", "function": {
+                    "name": "query_order", "arguments": '{"order_id":"A1001"}',
+                }} for i in range(4)
+            ]},
+            *[{"role": "tool", "tool_call_id": f"q-{i}", "content": "已发货"}
+              for i in range(4)],
+        ]
+        for manager in (ContextManager(max_messages=3),
+                        ContextManager(max_messages=None, max_tokens=1)):
+            with self.subTest(max_tokens=manager.max_tokens):
+                result = manager.maybe_compact(messages)
+                self.assertEqual(result[0]["role"], "assistant")
+                self.assertEqual([m["tool_call_id"] for m in result[1:]],
+                                 ["q-0", "q-1", "q-2", "q-3"])
+
 
 if __name__ == "__main__":
     unittest.main()

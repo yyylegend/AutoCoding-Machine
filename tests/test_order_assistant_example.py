@@ -77,3 +77,11 @@ def test_order_assistant_pause_exposes_redacted_request(tmp_path):
     assert request["tool_name"] == "save_reply_draft"
     assert request["details"]["order_id"] == "A1001"
     assert SAVED_DRAFTS == []
+
+
+def test_live_order_assistant_supplies_business_schemas_to_model(tmp_path):
+    session = build_session(tmp_path, live=True)
+    adapter = session.runtime.loop.model_fn.__self__
+    names = {schema["function"]["name"] for schema in adapter.tools_schemas}
+    assert names == {"query_order", "save_reply_draft"}
+    assert adapter.tools_schemas == session.runtime.tools.get_schemas()
