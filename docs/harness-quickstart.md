@@ -62,6 +62,16 @@ uv run --env-file .env python .\app.py
 
 调用程序从自己的工作目录运行；模型配置从调用方的 `.env` 或进程环境读取。如果还没有 `pyproject.toml`，先运行 `uv init --bare --no-package`。
 
+## 再跑一个业务示例
+
+仓库里还有一个不带代码能力的业务组合示例：[订单查询与回复草稿助手](../examples/order_assistant.py)。它用本地字典做演示订单数据，注册「查询订单」和「保存回复草稿」两个自定义工具，配一段业务提示词，默认走确定性演示模型，不需要 API Key：
+
+```powershell
+uv run python .\examples\order_assistant.py
+```
+
+输出会依次显示事件（包括等待确认与权限决议）、最终回复和未发送的草稿。示例只把回复存进演示草稿箱，不发送真实消息。它展示业务调用方只用公共入口就能完成自定义工具、人工确认和结果汇报；完整约定见 [Harness Cookbook](harness-cookbook.md)。
+
 ## 接下来
 
 本页先帮你跑通 Harness 和本地安装。接入自己的模型、注册工具、处理权限和恢复会话等完整做法，见 [Harness Cookbook](harness-cookbook.md)。

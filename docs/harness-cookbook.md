@@ -207,6 +207,38 @@ session = open_harness_session(
 
 `TDAI_MEMORY_API_KEY` 也必须从本地环境读取，不能写进代码或提交到仓库。上述调用只开启召回；连接失败会跳过记忆，不阻断主任务。写回默认关闭。确实需要写回时，再显式添加 `memory_writer=provider`；每次成功任务只写用户输入和最终回复，不写工具过程。结果中的 `memory_writeback` 会标记 `saved`、`failed` 或 `unknown`。`unknown` 表示服务是否收到数据无法确认，Harness 不会自动重试；远端记忆也不会随本地 `/clear` 删除。Tencent 云端部署尚未验证；更多边界见[架构说明](architecture.md)。
 
+## 6. 运行结果与事件契约
+
+`run.start()` 与 `run.resolve_permission()` 返回普通字典，按 `status` 区分：
+
+| status | 附加字段 | 含义 |
+| --- | --- | --- |
+| `success` | `reply`；启用写回时另有 `memory_writeback` | 任务完成，`reply` 是最终回复 |
+| `need_input` | `reply` | 模型停下等待补充信息，不算成功 |
+| `permission_required` | `permission_request` | 等待人工决定，工具尚未执行 |
+| `failed` | `error`，可能有 `reply` / `tool_result` | 运行失败；`error` 是原因 |
+| `cancelled` | 无 | 协作式取消后的确定结果 |
+
+`permission_request` 是脱敏视图：`tool_name`、`tool_call_id`、`summary`（尽力而为的短描述，具体参数看 `details`）、`details`、`turn`。修改这份视图不会改变真实执行参数。
+
+三类错误分开处理：
+
+- **配置错误**在打开会话时抛异常（`ValueError` / `TypeError`）：Profile YAML 非法、`on_event` 不可调用、`tools` 与 `runtime_components` 同时提供等。任务不会开始。
+- **调用方式错误**在运行中抛 `RuntimeError`：重复 `start()`、没有等待中的请求却调用 `resolve_permission()`、重复提交已消费的权限决定。
+- **运行失败**不抛异常，通过 `result["status"] == "failed"` 返回；`error` 取值包括 `max_turns`、`session_write_failed`、`verification_required`、`guard_stopped`、`no_tool_call`。
+
+事件顺序遵守以下约定（详见 [ADR 0001](adr/0001-harness-event-contract.md)）：
+
+1. 工具执行前发 `pre_tool`；每个工具调用都有配对的 `post_tool`——被拒绝或因取消未执行的调用也有 `post_tool` 和明确回执。
+2. 需要审批时先发 `permission_required`（带 `request`），宿主显式调用 `resolve_permission(approved=...)` 后才发 `permission_resolved`（`decision` 为 `approved` 或 `denied`），然后才是该工具的 `post_tool`。批准只代表获准尝试，工具可能执行失败。
+3. 终止事件是 `done` / `need_input` / `failed` / `cancelled` 之一；Run Result 独立返回，事件不能替代结果。
+
+`on_event` 只观察：返回值被忽略，注册回调不会自动批准权限，回调抛异常不会中断任务，异常日志只记录事件名和异常类型，不含原始内容。公开事件一律是脱敏副本：明显凭据被遮盖，超过 200 字符的值整体隐藏。
+
+取消是协作式取消：`run.cancel()` 后循环在下一个检查点退出。等待审批期间取消后，随后到达的批准也不执行工具，同批未执行的调用会补「未执行」回执；已发生的副作用不会被撤回。
+
+订单查询与回复草稿助手（`examples/order_assistant.py`）把以上约定串成一个业务示例：自定义工具、业务提示词、权限交接和确定性演示路径，全程不依赖真实模型或外部服务。
+
 ## 接下来
 
 这些例子展示的是可组合的入口和当前明确支持的接口，不代表已经支持动态安装任意 Python 插件。具体模块职责见[架构说明](architecture.md)；从第一次运行开始请回到[快速入门](harness-quickstart.md)。

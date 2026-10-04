@@ -35,12 +35,12 @@ src/__main__.py      # 兼容旧的 python -m src 命令
 | 对原始会话的读写 | `SessionStore`；`AgentSession` 追加用户/技能消息，`AgentRun` 与 `MachineLoop` 追加工具/助手消息 |
 | 消息组装与运行组件引用 | `AgentRuntime`、`RuntimeRegistry` |
 | 单次任务的取消、当前结果与权限恢复 | `AgentRun`；CLI 只收集用户的批准结果 |
-| 执行轮数 | `MachineLoop` |
+| 执行轮数 | `MachineLoop`；权限暂停恢复时由 `AgentRun` 传回暂停轮次，一次任务的 `max_turns` 预算连续计数，不重新起算 |
 | 文件基线、验证版本、候选回答 | Coding 的 `CompletionGate` |
 | 工具可用范围与资源 | `RuntimeComponents` 中的 `ProfileTools`、`ToolEnvironment`、`ToolManager` |
 | 运行记录 | `RunTrace` 包装模型调用，并订阅 typed `AgentEvent` |
 
-目前已有第一切片的 `AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent`，但它们不替代 `MachineLoop`。`AgentSession` 保留 JSONL 作为原始事实源，管理压缩和清屏后的进程内视图；`AgentRun` 持有一次任务的消息、取消令牌和待确认工具，并在确认后统一触发事件、回填消息、写入 Session 再恢复循环。`RequestView` 负责历史召回和临时状态追加；旧的按名称 Hook 仍保留给 CompletionGate 等控制策略。`ToolEnvironment` 仍继承 `WorkspaceSandbox`。
+目前已有第一切片的 `AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent`，但它们不替代 `MachineLoop`。`AgentSession` 保留 JSONL 作为原始事实源，管理压缩和清屏后的进程内视图；`AgentRun` 持有一次任务的消息、取消令牌和待确认工具，并在确认后统一触发事件、回填消息、写入 Session 再恢复循环。同一模型回复内的多个工具调用按顺序成批处理：某个调用等待审批时，同批剩余调用随暂停结果保存，恢复后按原顺序继续，已执行的调用不重复执行；用户拒绝只影响当前调用，剩余调用继续各自的权限检查；只有取消会中止批次，未执行调用补明确的「未执行」回执。取消是协作式取消：等待审批期间取消后，随后到达的批准也不执行工具，已发生的副作用不会被撤回。`RequestView` 负责历史召回和临时状态追加；旧的按名称 Hook 仍保留给 CompletionGate 等控制策略。`ToolEnvironment` 仍继承 `WorkspaceSandbox`。
 
 ## Profiles 与共享模块
 
@@ -62,7 +62,7 @@ src/__main__.py      # 兼容旧的 python -m src 命令
 
 Engine 不需要知道 Companion 的人格或 Coding 的提示词。Coding 可通过 Profile 的 `verify_on_stop` 启用完成验证门；Review 不注册写工具；Companion 不注册文件和 Shell 工具，并默认关闭 Coding 指令文件加载。
 
-`ProfileTools` 以筛选后的技能清单决定是否注册技能入口：清单为空时，`search_skills` 和 `load_skill` 既不出现在模型工具定义中，也不能被执行。低层搜索工具仍处理空清单，明确区分“没有可用技能”和“关键词不匹配”。
+`ProfileTools` 以筛选后的技能清单决定是否注册技能入口：清单为空时，`search_skills` 和 `load_skill` 既不出现在模型工具定义中，也不能被执行；`skills=()` 明确不使用技能时，启动阶段直接跳过技能目录扫描。低层搜索工具仍处理空清单，明确区分“没有可用技能”和“关键词不匹配”。
 
 所有 Profile 都将 sessions 和 input_history 放在 `.autocoding/profiles/<name>/` 下；runs 只有在 `trace_enabled: true` 时才创建。默认 Coding 的项目记忆仍兼容 `.autocoding/MEMORY.md`，用户记忆仍兼容全局 USER.md。首次启动会把旧的 `.autocoding/sessions`、`runs` 和 `input_history` 移到 `profiles/coding/`，只在目标不存在时移动文件。这是应用状态分离，不是操作系统级隔离。
 
@@ -124,7 +124,7 @@ run = session.begin_run("检查代码")
 result = run.start()
 ```
 
-`model_fn(messages)` 由调用方提供，返回 `AgentResponse`。`result["status"]` 可以是 `success`、`need_input`、`permission_required`、`failed` 或 `cancelled`；权限暂停时从 `result["permission_request"]` 读取安全摘要和详情，再用同一个 Run 显式调用 `resolve_permission(approved=...)`。`permission_required` 和 `permission_resolved` 事件分别表示等待决定与决定结果；批准不等于工具成功。取消时用 `run.cancel()`。任务结束后可调用 `session.refresh()` 更新进程内会话视图；若返回 `session_write_failed`，需先检查实际操作和会话文件，不能把内存结果当作已保存记录。`resume` 传会话 ID 可恢复指定会话，传空字符串恢复最近会话；目标不存在时抛出 `ValueError`。
+`model_fn(messages)` 由调用方提供，返回 `AgentResponse`。`result["status"]` 可以是 `success`、`need_input`、`permission_required`、`failed` 或 `cancelled`，各状态的附加字段和三类错误（配置错误抛异常、调用方式错误抛 `RuntimeError`、运行失败走结果）见 [Cookbook 的结果与事件契约](harness-cookbook.md#6-运行结果与事件契约)；权限暂停时从 `result["permission_request"]` 读取安全摘要和详情，再用同一个 Run 显式调用 `resolve_permission(approved=...)`。`permission_required` 和 `permission_resolved` 事件分别表示等待决定与决定结果；批准不等于工具成功。取消时用 `run.cancel()`。任务结束后可调用 `session.refresh()` 更新进程内会话视图；若返回 `session_write_failed`，需先检查实际操作和会话文件，不能把内存结果当作已保存记录。`resume` 传会话 ID 可恢复指定会话，传空字符串恢复最近会话；目标不存在时抛出 `ValueError`。
 
 会话写入失败返回 `failed/session_write_failed`，不再把未保存的回复报告为成功。工具若已执行，返回值保留 `tool_result`，本次任务停止且不会自动重试；CLI 停止当前会话并提示检查实际副作用。重开会话时，缺少回执的工具调用只补“执行状态未知”消息，不能据此断言工具未执行。JSONL 仍是跨进程恢复的来源，内存中的失败结果不会自动补写。
 
@@ -178,7 +178,7 @@ Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/r
 
 ## 上下文摘要与超限的失败策略
 
-- Profile 设置 `context_budget` 时直接使用该输入预算，调用方负责预留输出空间。未设置时：默认模型优先使用 `CODING_CONTEXT_LENGTH`，否则查询匹配模型的 `/models` 元数据；llama.cpp 使用 `/props` 的部署 `n_ctx`，不使用 `n_ctx_train`。覆盖成不同模型时单独查询，不沿用默认模型窗口。查询失败显示窗口未知，仅按 128K 假设计算回退预算。自动输入预算最多占窗口的 80%，同时预留最大输出和估算误差空间。
+- Profile 设置 `context_budget` 时直接使用该输入预算，调用方负责预留输出空间；这种情况下不再查询模型窗口，业务调用方可完全离线启动。未设置时：默认模型优先使用 `CODING_CONTEXT_LENGTH`，否则查询匹配模型的 `/models` 元数据；llama.cpp 使用 `/props` 的部署 `n_ctx`，不使用 `n_ctx_train`。覆盖成不同模型时单独查询，不沿用默认模型窗口。查询失败显示窗口未知，仅按 128K 假设计算回退预算。自动输入预算最多占窗口的 80%，同时预留最大输出和估算误差空间。
 - 摘要默认**关闭**（`.env` 的 `CONTEXT_SUMMARY_ENABLED=false`）：不调用 LLM，只做安全截断。
 - 开启后，异常、超时、HTTP 错误、空响应统一视为失败，但**不中断任务**：
   改为插入一段确定性摘录（原始目标 / 近期决定 / 报错现场 / 涉及文件，总长 ≤ 4000 字符，
@@ -229,3 +229,4 @@ Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/r
 4. **会话使用追加写。** JSONL 保留原始消息流水，压缩只影响运行时上下文。
 5. **安全默认拒绝。** 未注册工具、保护路径和异常检查不会静默放行。
 6. **可选的 Coding 修改验证。** 启用 `verify_on_stop` 时，Gate 跟踪写工具触碰的文件及修改后的验证；这不等于独立验收任务正确性。Review 与 Companion 不使用该验证门。
+7. **每个工具调用都有回执或明确的未执行原因。** 一批调用按顺序处理，审批暂停保留同批剩余调用、恢复后继续，已执行的不重复；取消是协作式取消，未执行调用补「未执行」回执，会话历史始终完整可恢复。
