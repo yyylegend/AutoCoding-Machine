@@ -14,6 +14,7 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "requests>=2.34.2",
     "rich>=15.0.0",
+    "textual>=8.2.8,<9",
     "tiktoken>=0.14.0",
 ]
 
@@ -25,6 +26,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["auto_coding_machine*"]
+
+[tool.setuptools.package-data]
+"auto_coding_machine.profiles.coding.tui" = ["*.tcss"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]

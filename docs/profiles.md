@@ -52,7 +52,7 @@ kind: coding
 verify_on_stop: true
 ```
 
-环境变量 `CODING_VERIFY_ON_STOP=true|false` 优先于 Profile YAML，可覆盖当前进程中的设置。`.env` 中若显式写了 `false`，要改用 Profile 设置时需删除该环境变量。此开关只影响完成验证门，不改变工具权限确认。
+通过 Python 公共入口组装时，环境变量 `CODING_VERIFY_ON_STOP=true|false` 优先于 Profile YAML。Textual CLI 显式管理此实验功能：启动默认关闭，使用 `--verify-on-stop`、界面开关或 `/verify on|off` 设置，优先于环境变量和 Profile。切换只能在任务空闲时进行；只影响完成验证门，工具权限确认始终保留。详见 [CLI 使用指南](cli.md)。
 
 Skills 从 `~/.agents/skills/` 和 `<workspace>/.agents/skills/` 发现，项目级同名覆盖全局级。Profile 组装时筛选清单，搜索和加载工具共用该清单；修改技能目录后重新启动。修改自定义 YAML 后可用 `/profile <路径>` 重新加载变化后的配置。要让模型加载 Skills，需启用 `load_skill` 工具。
 

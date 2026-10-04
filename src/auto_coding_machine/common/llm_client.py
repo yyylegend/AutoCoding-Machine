@@ -278,7 +278,7 @@ def fetch_model_context_window(base_url=None, api_key=None, auth_type=None, mode
 
 def chat_stream(messages, tools=None, tool_choice="auto", timeout=None,
                 model=None, base_url=None, api_key=None, auth_type=None,
-                max_tokens=None, on_token=None):
+                max_tokens=None, on_token=None, extra_headers=None):
     """流式调用 LLM（SSE），边生成边回调，返回含 usage / TTFT 的结果。
 
     与 chat() 的区别：
@@ -334,7 +334,7 @@ def chat_stream(messages, tools=None, tool_choice="auto", timeout=None,
 
     resp = requests.post(
         f"{_base_url}/chat/completions",
-        headers={**auth_header, "Content-Type": "application/json"},
+        headers={**(extra_headers or {}), **auth_header, "Content-Type": "application/json"},
         json=payload,
         timeout=timeout,
         stream=True,  # 关键：不一次性读完，逐块拿

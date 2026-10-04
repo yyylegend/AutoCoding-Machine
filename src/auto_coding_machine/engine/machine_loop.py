@@ -478,6 +478,10 @@ class MachineLoop:
                 messages = outcome["messages"]
                 response = outcome["response"]
 
+            # 同步模型请求期间也可能收到取消；返回后先检查，再处理回复。
+            if cancel.is_cancelled():
+                return self._abort_unexecuted(messages, [], 0, turn)
+
             # 第 3 步：没有 tool_calls，检查是否完成
             if not response.tool_calls:
                 # 只有明确 done 或 final_verifier 通过才算成功

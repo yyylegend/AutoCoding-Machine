@@ -479,9 +479,12 @@ def main():
         help="恢复会话：不带值恢复最近一次，带值恢复指定 id（/sessions 可查）",
     )
     parser.add_argument("--profile", default="coding", help="coding / review / companion 或自定义 YAML 路径")
+    parser.add_argument("--verify-on-stop", action=argparse.BooleanOptionalAction, default=False,
+                        help="开启或关闭实验性的完成验证；默认关闭")
     args = parser.parse_args()
     try:
-        run_cli(resume=args.resume, profile=args.profile)
+        from auto_coding_machine.profiles.coding.tui.app import CodingApp
+        CodingApp(resume=args.resume, profile=args.profile, verify_on_stop=args.verify_on_stop).run()
     except ValueError as exc:
         parser.error(str(exc))
 

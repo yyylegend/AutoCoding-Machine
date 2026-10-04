@@ -82,6 +82,7 @@ def build_runtime_components(
     context_manager=None,
     context_selector=None,
     completion_gate=None,
+    verify_on_stop=None,
     permission=None,
     guard=None,
     budget=None,
@@ -143,11 +144,12 @@ def build_runtime_components(
                 else profile.state_dir(workspace) / "sessions"
             ),
         )
-    verify_on_stop = (
-        settings.CODING_VERIFY_ON_STOP
-        if settings.CODING_VERIFY_ON_STOP is not None
-        else profile.verify_changes
-    )
+    if verify_on_stop is None:
+        verify_on_stop = (
+            settings.CODING_VERIFY_ON_STOP
+            if settings.CODING_VERIFY_ON_STOP is not None
+            else profile.verify_changes
+        )
     if completion_gate is None and profile.kind == "coding" and verify_on_stop:
         # 完成证据门是 Coding 专属策略，放在组件组装 seam 内统一创建。
         sandbox = getattr(tools, "sandbox", None)

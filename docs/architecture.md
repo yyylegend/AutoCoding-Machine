@@ -8,7 +8,7 @@
 
 ## 当前结构
 
-CLI 是外部交互入口，Coding、Review 与 Companion 使用同一运行时，由 `auto_coding_machine.profiles.config` 决定能力组合。CLI 仍负责终端 Hook、模型适配器和预算元数据展示；工具、权限、上下文、完成验证和预算对象由 Factory 统一组装。会话视图已收拢到 `AgentSession`，单次任务的启动、权限恢复和取消已收拢到 `AgentRun`。
+CLI 使用 Textual，Coding、Review 与 Companion 使用同一运行时，由 `auto_coding_machine.profiles.config` 决定能力组合。CLI 负责界面、终端模型 Adapter 和预算展示；工具、权限、上下文、完成验证和预算对象由 Factory 统一组装。会话视图由 `AgentSession` 管理，单次任务的启动、权限恢复和取消由 `AgentRun` 管理。
 
 ```text
 src/auto_coding_machine/
@@ -30,8 +30,8 @@ src/__main__.py      # 兼容旧的 python -m src 命令
 
 | 状态 | 当前持有者 |
 | --- | --- |
-| 当前 Profile 与配置切换 | CLI 的 `run_cli` 外层循环 |
-| 当前 store、history、压缩视图 | `AgentSession`；Plan Mode 仍由 CLI 局部变量持有 |
+| 当前 Profile 与配置切换 | Textual `CodingApp`；任务空闲时重建会话 |
+| 当前 store、history、压缩视图 | `AgentSession`；Plan Mode 由 `CodingApp` 持有 |
 | 对原始会话的读写 | `SessionStore`；`AgentSession` 追加用户/技能消息，`AgentRun` 与 `MachineLoop` 追加工具/助手消息 |
 | 消息组装与运行组件引用 | `AgentRuntime`、`RuntimeRegistry` |
 | 单次任务的取消、当前结果与权限恢复 | `AgentRun`；CLI 只收集用户的批准结果 |
@@ -76,11 +76,11 @@ Engine 不需要知道 Companion 的人格或 Coding 的提示词。Coding 可�
 
 ## TUI 与配置切换
 
-`run_cli` 用外层循环管理 Profile，内层会话循环返回所选配置。切换清除旧 Plan Mode、权限对象和压缩视图，保留原始 JSONL。输入历史按 Profile 的状态目录保存，避免上下键带出其他配置的输入。
+默认命令行入口启动 `profiles/coding/tui/` 下的 Textual 应用。Profile 切换在任务空闲时重建运行组件、清除旧 Plan Mode 和权限对象，保留原始 JSONL；输入历史按 Profile 的状态目录保存。已有 `run_cli()` 及其 Rich/prompt_toolkit 实现保留兼容调用。
 
 切换清单包含内置预设与工作区 `profile_configs/` 下的有效 YAML；`examples/profiles/` 只存教学示例，不参与自动发现。自定义配置通过路径加载，列表名称尚不作为别名解析。
 
-`cli_input.py` 负责命令补全、按键和输入底栏；`cli_ui.py` 负责渐变 Banner、回复面板、工具参数卡片和状态展示。底栏所需的 token 估算只在进入输入前更新，不在每次按键重绘时重新计算。流式和非流式输出都使用 Markdown 面板，完成验证门继续决定内容何时展示。
+`tui/app.py` 管理界面、命令、后台 worker 和会话交接；`tui/widgets.py` 提供输入、品牌、工具详情和权限弹窗；`tui/model.py` 通过现有模型调用函数接收流式内容；`styles.tcss` 定义布局与主题。同步模型和工具在后台线程执行，只通过 Textual 消息更新界面。完成验证默认关闭，可以在空闲时开启；权限决定由宿主显式调用 `resolve_permission()`。开启完成验证后，候选回答继续受 CompletionGate 的展示策略控制。
 
 ## 调用流程
 
@@ -126,7 +126,7 @@ run = session.begin_run("检查代码")
 result = run.start()
 ```
 
-`model_fn(messages)` 由调用方提供，返回 `AgentResponse`。`result["status"]` 可以是 `success`、`need_input`、`permission_required`、`failed` 或 `cancelled`，各状态的附加字段和三类错误（配置错误抛异常、调用方式错误抛 `RuntimeError`、运行失败走结果）见 [Cookbook 的结果与事件契约](harness-cookbook.md#6-运行结果与事件契约)；权限暂停时从 `result["permission_request"]` 读取安全摘要和详情，再用同一个 Run 显式调用 `resolve_permission(approved=...)`。`permission_required` 和 `permission_resolved` 事件分别表示等待决定与决定结果；批准不等于工具成功。取消时用 `run.cancel()`。任务结束后可调用 `session.refresh()` 更新进程内会话视图；若返回 `session_write_failed`，需先检查实际操作和会话文件，不能把内存结果当作已保存记录。`resume` 传会话 ID 可恢复指定会话，传空字符串恢复最近会话；目标不存在时抛出 `ValueError`。
+`model_fn(messages)` 由调用方提供，返回 `AgentResponse`。`result["status"]` 可以是 `success`、`need_input`、`permission_required`、`failed` 或 `cancelled`，各状态的附加字段和三类错误（配置错误抛异常、调用方式错误抛 `RuntimeError`、循环已分类的运行失败走结果）见 [Cookbook 的结果与事件契约](harness-cookbook.md#6-运行结果与事件契约)。未分类的模型、网络及自定义组件异常直接向调用方抛出。权限暂停时从 `result["permission_request"]` 读取安全摘要和详情，再用同一个 Run 显式调用 `resolve_permission(approved=...)`。`permission_required` 和 `permission_resolved` 事件分别表示等待决定与决定结果；批准不等于工具成功。取消时用 `run.cancel()`。任务结束后可调用 `session.refresh()` 更新进程内会话视图；若返回 `session_write_failed`，需先检查实际操作和会话文件，不能把内存结果当作已保存记录。`resume` 传会话 ID 可恢复指定会话，传空字符串恢复最近会话；目标不存在时抛出 `ValueError`。
 
 会话写入失败返回 `failed/session_write_failed`，不再把未保存的回复报告为成功。工具若已执行，返回值保留 `tool_result`，本次任务停止且不会自动重试；CLI 停止当前会话并提示检查实际副作用。重开会话时，缺少回执的工具调用只补“执行状态未知”消息，不能据此断言工具未执行。JSONL 仍是跨进程恢复的来源，内存中的失败结果不会自动补写。
 

@@ -1,0 +1,38 @@
+Screen { background: $background; color: $foreground; }
+#topbar { height: 1; padding: 0 2; background: $panel; }
+#body { height: 1fr; }
+#sidebar { width: 29; padding: 1; background: $surface; border-right: solid $panel; }
+.section-label { margin-top: 1; margin-bottom: 1; color: $primary; text-style: bold; }
+.muted { color: $text-muted; height: auto; }
+#sidebar Select { margin-bottom: 1; }
+#verify-switch { margin-bottom: 1; }
+#new-session { width: 100%; margin: 1 0; }
+#sessions { height: 1fr; border: none; background: $surface; }
+#main { width: 1fr; }
+#session-info { height: 2; padding: 0 2; color: $text-muted; text-overflow: ellipsis; }
+#transcript { height: 1fr; padding: 1 2; scrollbar-size: 1 1; }
+#brand { height: auto; margin-bottom: 1; }
+#welcome { height: auto; color: $text-muted; }
+.user-message { height: auto; margin: 1 0; color: $primary; }
+.agent-message { height: auto; margin: 1 0; }
+.notice { height: auto; margin: 1 0; color: $text-muted; }
+.notice.error { color: $error; }
+.tool-activity { height: auto; padding: 0; margin: 0; background: $surface; border: none; }
+#activity { height: 1; margin: 0 2; }
+#loading { width: 5; height: 1; }
+#activity-text { width: 1fr; height: 1; color: $text-muted; }
+#composer { height: 5; margin: 0 2; border: tall $panel; background: $surface; }
+#composer:focus { border: tall $primary; }
+#actions { height: 3; padding: 0 2; }
+#input-hint { width: 1fr; color: $text-muted; content-align: left middle; }
+#actions Button { min-width: 8; height: 3; margin-left: 1; }
+#status { height: 1; padding: 0 2; color: $text-muted; }
+#completion-menu { height: auto; max-height: 7; margin: 0 2; border: tall $primary; }
+PermissionScreen { align: center middle; background: $background 80%; }
+#permission-dialog { width: 80%; max-width: 90; height: auto; max-height: 90%; padding: 1 2; background: $surface; border: tall $warning; }
+.dialog-heading { height: 1; color: $warning; text-style: bold; margin-bottom: 1; }
+#permission-summary { height: auto; margin-bottom: 1; }
+#permission-details { height: auto; max-height: 12; margin-bottom: 1; }
+#permission-details Static { height: auto; }
+.dialog-actions { height: 3; align-horizontal: right; margin-top: 1; }
+.dialog-actions Button { margin-left: 1; }

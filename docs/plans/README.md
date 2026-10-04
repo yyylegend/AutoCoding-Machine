@@ -1,6 +1,6 @@
 # 后续需求与计划
 
-[返回首页](../../README.md) · [当前架构](../architecture.md) · [当前 Profile 用法](../profiles.md)
+[返回首页](../../README.md) · [产品总览](../product-overview.md) · [当前架构](../architecture.md) · [当前 Profile 用法](../profiles.md)
 
 这里统一放未来方向和实施计划，不再另建 requirements 文件夹。当前功能以首页和架构说明为准；计划中的接口和能力不代表已经实现。
 
@@ -8,12 +8,12 @@
 
 | 文档 | 目标 | 状态 |
 | --- | --- | --- |
-| [Harness Core v0.1 收尾](2026-10-04-harness-core-readiness.md) | 收紧任务生命周期，补业务示例、公共接口约定与独立安装验证 | 已完成；466 项测试通过，wheel 双平台验证 |
+| [Harness Core v0.1 收尾](2026-10-04-harness-core-readiness.md) | 收紧任务生命周期，补业务示例、公共接口约定与独立安装验证 | 已完成；验收证据见计划正文 |
 | [模块化 Harness 与插件适配](2026-09-22-modular-harness.md) | 让核心执行流程可复用，并通过明确 Adapter 插槽接入外部能力 | Phase 0–4 本地实现；Phase 5 按现有需求验收完成；Phase 6 待条件满足 |
 | [Harness 第二调用者验证](2026-09-24-harness-reuse-validation.md) | 用独立的只读 Review 程序和本地 editable 安装验证公共包入口 | 已完成；本地安装与真实模型调用通过 |
 | [Harness 公共事件与权限交接](2026-09-24-harness-public-events.md) | 让外部程序观察运行状态，并安全处理权限暂停 | 已实现；442 项测试通过 |
 
-CLI 与无界面 Review 示例已共用公共入口；外部调用方通过本地 editable 依赖安装成功，目前没有证据要求重构 CLI。生命周期摩擦点与独立安装验证已按[收尾计划](2026-10-04-harness-core-readiness.md)完成。腾讯 L1 仍是可选实验；Phase 6 以第二个真实外部 Adapter 为前提。
+CLI 与无界面 Review 示例已共用公共入口；外部调用方通过本地 editable 依赖安装成功。生命周期与独立安装验证已按[收尾计划](2026-10-04-harness-core-readiness.md)完成。Textual CLI 迁移属于应用层更新，已在 `dev` 实现并推送，尚未合并到 `main`；实体终端交互仍待验收，使用方式见 [CLI 指南](../cli.md)。腾讯 L1 仍是可选实验；Phase 6 以第二个真实外部 Adapter 为前提。
 
 ## 暂缓
 
