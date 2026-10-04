@@ -12,7 +12,7 @@
 
 ```powershell
 Copy-Item examples/profiles/reviewer.yaml profile_configs/my-review.yaml
-uv run python -m src --profile profile_configs/my-review.yaml
+uv run python -m auto_coding_machine --profile profile_configs/my-review.yaml
 ```
 
 ```yaml

@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AutoCoding Machine Harness 包结构",
+    "output": "harness-package-structure.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1360, 680]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [60, 50],
+    "cols": 4,
+    "gapX": 60,
+    "gapY": 122,
+    "cellW": 240,
+    "cellH": 120
+  },
+  "components": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "外部程序",
+      "sublabel": "CLI / Python",
+      "tag": "uv editable",
+      "row": 1,
+      "col": 0,
+      "size": [220, 80]
+    },
+    {
+      "id": "entry",
+      "type": "backend",
+      "label": "auto_coding_machine",
+      "sublabel": "公共导入入口",
+      "tag": "__init__ / __main__",
+      "row": 1,
+      "col": 1,
+      "size": [220, 80]
+    },
+    {
+      "id": "common",
+      "type": "backend",
+      "label": "common",
+      "sublabel": "模型适配 / Token",
+      "row": 0,
+      "col": 1,
+      "size": [220, 80]
+    },
+    {
+      "id": "config",
+      "type": "backend",
+      "label": "config",
+      "sublabel": "环境 / 配置",
+      "row": 0,
+      "col": 2,
+      "size": [220, 80]
+    },
+    {
+      "id": "runtime",
+      "type": "backend",
+      "label": "runtime",
+      "sublabel": "会话 / 任务",
+      "row": 1,
+      "col": 2,
+      "size": [220, 80]
+    },
+    {
+      "id": "engine",
+      "type": "backend",
+      "label": "engine",
+      "sublabel": "循环 / 权限 / 契约",
+      "row": 1,
+      "col": 3,
+      "size": [220, 80]
+    },
+    {
+      "id": "memory",
+      "type": "backend",
+      "label": "memory",
+      "sublabel": "本地 + 外部记忆",
+      "row": 2,
+      "col": 2,
+      "size": [220, 80]
+    },
+    {
+      "id": "profiles",
+      "type": "backend",
+      "label": "profiles",
+      "sublabel": "角色 / 工具策略",
+      "row": 2,
+      "col": 3,
+      "size": [220, 80]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "auto_coding_machine",
+      "wraps": ["entry", "common", "config", "runtime", "engine", "memory", "profiles"]
+    }
+  ],
+  "connections": [
+    { "id": "client_entry", "from": "client", "to": "entry", "label": "editable import", "variant": "emphasis" },
+    { "id": "entry_runtime", "from": "entry", "to": "runtime", "label": "open session" },
+    { "id": "entry_common", "from": "entry", "to": "common", "label": "ModelAdapter" },
+    { "id": "runtime_engine", "from": "runtime", "to": "engine", "label": "Run / Loop" },
+    { "id": "runtime_memory", "from": "runtime", "to": "memory", "label": "optional memory", "labelDy": 24 },
+    { "id": "runtime_profiles", "from": "runtime", "to": "profiles", "label": "tools / policy", "labelDy": 24 },
+    { "id": "config_common", "from": "config", "to": "common", "label": "model settings" }
+  ]
+}

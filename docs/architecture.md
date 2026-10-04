@@ -1,29 +1,30 @@
 # Architecture
 
-配套 [交互式架构图](diagrams/README.md) 展示整体结构和完成验证流程；细节与限制以本文和代码为准。
+配套 [交互式架构图](diagrams/README.md) 展示整体结构、[Harness 包结构](diagrams/harness-package-structure.html) 和完成验证流程；细节与限制以本文和代码为准。术语见 [CONTEXT.md](../CONTEXT.md)；公共事件与权限交互的约定见 [ADR 0001](adr/0001-harness-event-contract.md)，实施记录见[近期计划](plans/2026-09-24-harness-public-events.md)。
 
-本文描述当前代码实现。可复用 Harness 的目标见 [模块化 Harness 计划](plans/2026-09-22-modular-harness.md)；`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的生命周期整理见 [运行时边界基础计划](plans/2026-09-05-runtime-boundaries.md)。完整多入口会话和更完整的事件迁移仍未完成。
+本文描述当前代码实现。Python 包名为 `auto_coding_machine`，实现位于标准源码布局 `src/auto_coding_machine/`，本地 editable 安装可供其他项目使用。可复用 Harness 的目标见 [模块化 Harness 计划](plans/2026-09-22-modular-harness.md)；`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的演进背景见[运行时边界历史记录](archive/2026-09-05-runtime-boundaries.md)。
 
-未来方向统一放在 [plans 入口](plans/README.md)。Harness 插件与外部记忆仍是规划目标，不能按规划中的接口调用；长任务与上下文专项优化目前暂缓。
+未来方向统一放在 [plans 入口](plans/README.md)。外部记忆已有只读契约、测试替身和腾讯 Gateway HTTP Adapter；已用本机 Gateway 和真实模型生成的合成 L1 记忆验证召回、身份隔离及临时请求注入，腾讯云部署尚未验证。显式写回已实现但默认关闭，插件安装仍是后续规划。长任务与上下文专项优化目前暂缓。
 
 ## 当前结构
 
-CLI 是外部交互入口，Coding、Review 与 Companion 使用同一运行时，由 `src/profiles/config.py` 决定能力组合。CLI 仍负责终端 Hook、模型适配器和预算元数据展示；工具、权限、上下文、完成验证和预算对象由 Factory 统一组装。会话视图已收拢到 `AgentSession`，单次任务的启动、权限恢复和取消已收拢到 `AgentRun`。
+CLI 是外部交互入口，Coding、Review 与 Companion 使用同一运行时，由 `auto_coding_machine.profiles.config` 决定能力组合。CLI 仍负责终端 Hook、模型适配器和预算元数据展示；工具、权限、上下文、完成验证和预算对象由 Factory 统一组装。会话视图已收拢到 `AgentSession`，单次任务的启动、权限恢复和取消已收拢到 `AgentRun`。
 
 ```text
-src/__main__.py
-  → profiles/coding/cli.py：输入、命令、组件创建、会话视图
-      → profiles/config.py：读取 Profile
-      → runtime/factory.py：组装 RuntimeComponents，创建 AgentRuntime
-          → runtime/session.py：AgentSession 管理 JSONL 派生的会话视图
-              → runtime/run.py：AgentRun 管理单次任务与权限恢复
-                  → engine/machine_loop.py：模型与工具循环
-          → runtime/：上下文、RequestView、Skills、历史检索、记忆注入、Trace
-          → common/model_adapter.py：模型调用与响应解析
-          → profiles/coding/：工具实现与 Coding 完成验证
+src/auto_coding_machine/
+├── __init__.py      # 稳定的公共导入入口
+├── common/          # 模型适配、HTTP 调用、Token 与文本工具
+├── config/          # 环境与运行设置
+├── engine/          # 契约、MachineLoop、权限与 Hook
+├── memory/          # 本地记忆、MemoryProvider 契约与 Tencent Adapter
+├── profiles/        # Coding、Review、Companion 和各自的工具策略
+├── runtime/         # Factory、AgentRuntime、AgentSession、AgentRun
+└── __main__.py      # CLI 启动入口
+
+src/__main__.py      # 兼容旧的 python -m src 命令
 ```
 
-目录位置与适用场景并不完全相同：部分共用工具包装及终端代码仍在 `profiles/coding/`。`runtime/tools.py` 当前也会导入这里的工具模块，不能将其描述成已经独立发布的通用 SDK。
+产品专属工具和终端代码仍在 `profiles/coding/`；通用 Engine 和 Runtime 不依赖 CLI 入口。当前提供本地 editable 安装，尚未发布到 PyPI。
 
 ### 当前状态由谁持有
 
@@ -43,7 +44,7 @@ src/__main__.py
 
 ## Profiles 与共享模块
 
-`python -m src --profile <名称或YAML路径>` 在启动时读取不可变 Profile。配置解析拒绝未知字段、非法名称和超出类型范围的工具；TUI 的 `/profile` 在输入空闲时结束旧会话循环，重新组装 Profile 并开新会话；不在运行中的循环内替换组件，也不支持动态 Python 插件。
+`python -m auto_coding_machine --profile <名称或YAML路径>` 在启动时读取不可变 Profile。`python -m src` 暂时保留为兼容入口。配置解析拒绝未知字段、非法名称和超出类型范围的工具；TUI 的 `/profile` 在输入空闲时结束旧会话循环，重新组装 Profile 并开新会话；不在运行中的循环内替换组件，也不支持动态 Python 插件。
 
 | 模块 | 唯一负责的事情 |
 | --- | --- |
@@ -51,7 +52,7 @@ src/__main__.py
 | `runtime/factory.py` | 创建运行时并连接组件；保留 `create_coding_runtime` 兼容入口 |
 | `runtime/tools.py` | 按 Profile 注册工具，把记忆、Skills 和会话范围传给工具 |
 | `runtime/skills.py` | 发现与筛选 Skills，搜索、加载、CLI 使用同一启动清单 |
-| `runtime/memory.py` | 构造记忆路径与注入，工具只调用存储服务 |
+| `memory/` | 本地 Markdown 记忆；外部只读召回契约、测试替身与临时请求注入 |
 | `runtime/history.py` | JSONL 历史检索，供工具和自动召回复用 |
 | `runtime/context.py`、`context_selector.py`、`prompts.py` | 上下文预算、摘要、召回及指令注入 |
 | `engine/request_view.py` | 组合本次请求的历史召回和临时状态，不修改原始消息 |
@@ -97,19 +98,41 @@ User input
 
 ## 模块
 
-### `src/engine`
+### `auto_coding_machine.engine`
 
-与具体入口无关的执行内核：契约、循环、上下文、权限、守卫、Hook、会话、记忆和工具注册。
+与具体入口无关的执行内核：契约、循环、上下文、权限、守卫、Hook、会话和工具注册。
 
-### `src/runtime`
+### `auto_coding_machine.memory`
 
-提供组装入口。`build_runtime_components()` 统一创建工具、权限、上下文、完成验证、预算和状态栏；`create_runtime()` 把这组组件与 Engine、Profile 组合成 `AgentRuntime`。`AgentRuntime.create_session()` 创建会话视图，`AgentRuntime.create_run()` 创建单次任务。CLI 仍负责终端适配器和交互，不是完整的多入口会话创建入口。
+外部调用方从 `auto_coding_machine.memory` 导入记忆契约和 Tencent Adapter；实现仍位于本目录。本地 Markdown 记忆保留文件读写、路径创建和会话启动注入。`external.py` 定义只读 `MemoryProvider.recall` 和单独的写入 `MemoryWriter.capture`；写入接口默认关闭。`tencent.py` 通过 Gateway v3 的 `/v3/atomic/search` 召回 L1，并用 `/v3/conversation/add` 保存明确启用的已完成轮次；只包含用户输入和最终助手回复，不包含工具过程。两者都要求明确的 Team、Agent、User 身份。写入发生在本地任务成功落盘之后；失败在 `result.memory_writeback` 单独可见，超时标为 `unknown` 且不自动重试，避免重复入库。远端记录由 MemoryCore 管理，不随本地 `/clear` 删除；删除和保留管理仍由服务端负责。Phase 3 已用本机 Gateway 和合成 L1 记忆验证正向召回、错误用户隔离及 Harness 请求视图；腾讯云部署尚未验证。
 
-### `src/profiles/coding`
+### `auto_coding_machine.runtime`
+
+提供组装入口。`build_runtime_components()` 统一创建工具、权限、上下文、完成验证、预算和状态栏；`create_runtime()` 把这组组件与 Engine、Profile 组合成 `AgentRuntime`。外部 Python 调用方从 `auto_coding_machine` 导入 `open_harness_session` 打开本地 JSONL 会话并返回 `AgentSession`；CLI 用同一入口传入已准备好的终端组件，并从 Factory 读取预算信息。`open_harness_session(..., on_event=callback)` 可注册会话级同步观察者；它收到安全的 `AgentEvent` 副本，不能通过返回值控制执行，也不会自动批准权限。CLI 仍负责终端适配器和交互。调用方通过 editable 依赖安装本地包，模型配置从调用方工作目录或进程环境读取；尚未发布到 PyPI。
+
+公共入口可显式传入具有 `session_id`、`load()`、`append()` 的会话存储；默认实现仍是 JSONL。单次任务和可选运行记录已能使用不带文件路径的存储对象。使用 JSONL `SessionStore` 打开会话时，自动历史召回扫描该 Store 的文件目录；使用其他存储打开时，这一路召回默认关闭，避免混入本地 JSONL 历史。其他存储的跨会话检索尚未接入公共入口。
+
+Python 调用方也可显式传入 `tools=`，复用 `ProfileTools` 和 `ToolManager` 注册自己的工具；工具定义与权限仍由同一份注册表决定。CLI 继续使用按 Profile 筛选的内置工具，YAML 不会动态导入 Python 工具。
+
+无界面调用的最短路径：
+
+```python
+from auto_coding_machine import open_harness_session
+
+session = open_harness_session(workspace, model_fn, profile=profile)
+run = session.begin_run("检查代码")
+result = run.start()
+```
+
+`model_fn(messages)` 由调用方提供，返回 `AgentResponse`。`result["status"]` 可以是 `success`、`need_input`、`permission_required`、`failed` 或 `cancelled`；权限暂停时从 `result["permission_request"]` 读取安全摘要和详情，再用同一个 Run 显式调用 `resolve_permission(approved=...)`。`permission_required` 和 `permission_resolved` 事件分别表示等待决定与决定结果；批准不等于工具成功。取消时用 `run.cancel()`。任务结束后可调用 `session.refresh()` 更新进程内会话视图；若返回 `session_write_failed`，需先检查实际操作和会话文件，不能把内存结果当作已保存记录。`resume` 传会话 ID 可恢复指定会话，传空字符串恢复最近会话；目标不存在时抛出 `ValueError`。
+
+会话写入失败返回 `failed/session_write_failed`，不再把未保存的回复报告为成功。工具若已执行，返回值保留 `tool_result`，本次任务停止且不会自动重试；CLI 停止当前会话并提示检查实际副作用。重开会话时，缺少回执的工具调用只补“执行状态未知”消息，不能据此断言工具未执行。JSONL 仍是跨进程恢复的来源，内存中的失败结果不会自动补写。
+
+### `auto_coding_machine.profiles.coding`
 
 Coding 专属系统提示词、完成验证、Plan Mode、沙箱和代码工具，以及保留原位置的 CLI 和终端流式渲染。
 
-### `src/common`
+### `auto_coding_machine.common`
 
 跨模块基础能力：日志、OpenAI-compatible HTTP 客户端、无界面模型适配、文本裁剪和 Token 计数。
 
@@ -167,7 +190,7 @@ Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/r
 
 ## 完成证据门
 
-`CompletionGate`（Coding Profile 专属，`src/profiles/coding/completion_gate.py`）
+`CompletionGate`（Coding Profile 专属，`src/auto_coding_machine/profiles/coding/completion_gate.py`）
 在 Coding Profile 的 `verify_on_stop` 生效时负责交付前的修改验证检查，不判断整个用户需求是否完成。该选项默认关闭；Profile YAML 可开启或关闭，环境变量 `CODING_VERIFY_ON_STOP` 优先覆盖。Gate 先判断是否有需要验证的代码净修改，再检查验证时序：
 
 - **文件净变化**：`pre_tool` Hook 在写工具首次触碰路径前拍基线快照

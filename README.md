@@ -49,7 +49,7 @@ Copy-Item .env.example .env
 **3. 启动助手。**
 
 ```powershell
-uv run python -m src
+uv run python -m auto_coding_machine
 ```
 
 启动时所在的目录就是它处理文件的工作区。进入界面后直接打字即可：**Enter 发送，Alt+Enter 换行**。
@@ -94,6 +94,9 @@ Copy-Item examples/profiles/companion.yaml profile_configs/my-companion.yaml
 
 ## 想了解代码？
 
+- [在代码里使用 Harness](docs/harness-quickstart.md)：从一个最小例子开始，了解会话、任务和结果。
+- [Harness Cookbook](docs/harness-cookbook.md)：按实际任务学习模型、工具、权限、会话和可选记忆的接法。
+- [Microsoft Agent Framework 对照阅读](docs/microsoft-agent-framework.md)：用一个任务看懂 Agent、Harness、Session 与 Workflow，并对照本项目。
 - [当前架构](docs/architecture.md)：现在有哪些模块，分别负责什么。
 - [交互式架构图](docs/diagrams/README.md)：下载后用浏览器打开，查看整体结构和完成验证流程。
 - [后续需求与计划](docs/plans/README.md)：当前主线聚焦可组合 Harness 与适配器；暂缓功能和历史方案见索引。

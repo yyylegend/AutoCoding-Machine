@@ -1,6 +1,6 @@
 # 运行时边界演进计划
 
-状态：部分实施。`RuntimeComponents`、`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的第一切片已落地；本文其余目标仍是待实施设计。本计划作为[模块化 Harness 主线](2026-09-22-modular-harness.md)的生命周期基础，不单独扩展为新的产品路线。
+状态：归档的历史计划（部分实施）。`RuntimeComponents`、`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的第一切片已落地；其余目标是当时的设计设想，并非全部完成。当前范围见[模块化 Harness 主线](../plans/2026-09-22-modular-harness.md)；下文保留原阶段记录。
 
 当前实现以 [架构说明](../architecture.md) 为准，使用方法以 [README](../../README.md) 为准。
 
@@ -40,7 +40,9 @@ TUI / 未来 Web 入口 / 已有评测
 
 ## 已实施：AgentSession / AgentRun 第一切片
 
-`src/runtime/factory.py` 的 `build_runtime_components()` 统一创建工具、权限、上下文、完成验证、预算和状态栏。CLI 仍创建终端 Hook 和模型适配器，并把 UI 需要的预算元数据传入；Factory 与 CLI 使用同一组组件实例。
+`src/runtime/factory.py` 的 `build_runtime_components()` 统一创建工具、权限、上下文、完成验证、预算和状态栏。CLI 仍创建终端 Hook 和模型适配器，但预算及窗口信息由 Factory 解析并返回；Factory 与 CLI 使用同一组组件实例。
+
+`open_harness_session()` 已提供最小无界面调用路径，负责打开 JSONL 会话并创建 `AgentSession`；CLI 在准备好终端组件后也通过它创建 Session。它尚未接入外部记忆或插件注册。
 
 `src/runtime/session.py` 现在管理一段对话的 JSONL 派生视图：它保存压缩产物和视图起点，负责用户/技能消息追加、清屏、手动压缩、会话切换和中断回执修复；原始 JSONL 仍不被覆盖。
 

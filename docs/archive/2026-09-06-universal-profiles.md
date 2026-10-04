@@ -1,8 +1,8 @@
 # 通用 Profile：一份可以自由搭配的预设
 
-状态：已被[模块化 Harness 与插件适配计划](2026-09-22-modular-harness.md)承接。本文保留 Profile 配置、状态隔离和权限约束等历史需求，不再作为独立实施计划。
+状态：归档的历史设计，已被[模块化 Harness 与插件适配计划](../plans/2026-09-22-modular-harness.md)承接。本文保留 Profile 配置、状态隔离和权限约束等历史需求，不再作为独立实施计划。
 
-[规划入口](README.md) · [当前配置指南](../profiles.md) · [模块化 Harness 主线](2026-09-22-modular-harness.md) · [运行时边界](2026-09-05-runtime-boundaries.md)
+[规划入口](../plans/README.md) · [当前配置指南](../profiles.md) · [模块化 Harness 主线](../plans/2026-09-22-modular-harness.md) · [运行时边界历史计划](2026-09-05-runtime-boundaries.md)
 
 ## 想解决什么
 

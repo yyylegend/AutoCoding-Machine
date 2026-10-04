@@ -4,7 +4,7 @@
 
 状态：暂缓，尚未实施。Goal、Todo 及下述命令是设计草案；本文成稿时，项目已有 Plan、普通执行循环和基础上下文压缩。
 
-[规划入口](../plans/README.md) · [运行时边界](../plans/2026-09-05-runtime-boundaries.md)
+[规划入口](../plans/README.md) · [运行时边界历史记录](2026-09-05-runtime-boundaries.md)
 
 ## 三件事分别负责什么
 

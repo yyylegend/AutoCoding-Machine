@@ -3,6 +3,7 @@
 [返回首页](../../README.md) · [当前架构说明](../architecture.md)
 
 - [整体架构](architecture-overview.html)：终端、运行时、执行循环、工具和数据存储。
+- [Harness 包结构](harness-package-structure.html)：公共入口与 `auto_coding_machine` 内的主要子包。
 - [完成证据门](completion-gate-workflow.html)：何时要求验证、何时允许交付、何时标记未验证。
 
 下载仓库后双击 HTML 在浏览器打开。GitHub 文件页面显示源码，不会直接运行交互图。这两张图描述当前实现，不包含规划中的通用 Profile、Goal 或 Todo。
