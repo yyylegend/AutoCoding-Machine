@@ -25,10 +25,8 @@
   - Runtime 可用 BaseCodingAdapter
 """
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
-from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.text import Text
 
@@ -37,6 +35,7 @@ from auto_coding_machine.engine.contracts import AgentResponse
 
 
 from auto_coding_machine.common.model_adapter import ModelAdapter
+from auto_coding_machine.profiles.coding.cli_ui import agent_reply_panel
 
 
 class BaseCodingAdapter(ModelAdapter):
@@ -181,24 +180,28 @@ class StreamingAdapter(BaseCodingAdapter):
           chat_stream() 的完整结果 dict
         """
         theme = self.theme
+        accent = theme.get("accent", theme["ai"])
+        generating = Spinner(
+            "dots12", Text(" Agent 正在生成…", style=accent),
+            style=accent,
+        )
 
         # Live 初始显示动画 Spinner，首个 token 到达后切换为 Markdown 面板
         with Live(
-            Spinner("dots", Text(" Agent 思考中…", style=theme["dim"])),
+            Spinner("dots12", Text(" Agent 思考中… · Ctrl+C 取消", style=theme["dim"]),
+                    style=accent),
             console=self.console,
-            refresh_per_second=10,
+            refresh_per_second=12,
+            transient=not publish,
         ) as live:
 
             def _on_token(piece: str):
                 """每收到一个 content 片段就更新面板（或只缓冲）。"""
                 buffer.append(piece)
                 if publish:
-                    live.update(Panel(
-                        Markdown("".join(buffer)),
-                        title="[bold]Agent[/bold]",
-                        title_align="left",
-                        border_style=theme["ai"],
-                        padding=(0, 1),
+                    live.update(Group(
+                        generating,
+                        agent_reply_panel("".join(buffer), theme["ai"], theme=theme),
                     ))
 
             result = chat_stream(
@@ -212,6 +215,8 @@ class StreamingAdapter(BaseCodingAdapter):
             # 工具调用轮没有 content，清掉"思考中"占位
             if not buffer:
                 live.update(Text(""))
+            elif publish:
+                live.update(agent_reply_panel("".join(buffer), theme["ai"], theme=theme))
 
         return result
 

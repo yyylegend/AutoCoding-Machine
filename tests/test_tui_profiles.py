@@ -145,12 +145,8 @@ def test_compact_ui_fits_terminal(width, monkeypatch):
     cli_ui.print_profiles([{"name": "companion", "value": "companion"}], "companion")
     cli_ui.print_agent_reply("你好，今天想聊什么？", "default")
     text = output.getvalue()
-    # 宽终端显示原来的渐变 Logo，窄终端显示原来的紧凑 Panel。
-    if width >= 86:
-        assert "Coding Agent" in text
-        assert "Phase 2.5" in text
-    else:
-        assert "AutoCoding" in text
+    assert "AutoCoding Machine" in text
+    assert "Phase 2.5" not in text
     assert all(cell_len(line) <= width for line in text.splitlines())
 
 

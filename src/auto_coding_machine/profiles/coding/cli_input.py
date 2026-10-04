@@ -20,11 +20,13 @@
 import time
 from pathlib import Path
 
-from prompt_toolkit import HTML, PromptSession, prompt
+from prompt_toolkit import PromptSession, prompt
+from prompt_toolkit.application import get_app
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
+from prompt_toolkit.utils import get_cwidth
 from auto_coding_machine.profiles.config import BUILTINS, load_profile
 
 
@@ -171,16 +173,40 @@ def profile_choices(workspace):
     return choices
 
 
-def status_fragments(status):
+def _fit_text(text, width):
+    text = str(text).replace("\n", " ").replace("\r", " ")
+    if width <= 0:
+        return ""
+    if get_cwidth(text) <= width:
+        return text
+    result = []
+    cells = 0
+    for character in text:
+        cells += get_cwidth(character)
+        if cells > width - 1:
+            break
+        result.append(character)
+    return "".join(result) + "…"
+
+
+def status_fragments(status, *, width=80):
     """使用纯文本片段而非 HTML 插值，模型名中的特殊字符不会破坏显示。"""
     budget = status.get("budget", 0)
-    pct = int(status.get("tokens", 0) / budget * 100) if budget else 0
-    return [
-        ("class:status.profile", f" {status.get('profile', 'coding')} "),
-        ("class:status", f" · {status.get('model') or '未设置模型'} · 输入预算约 {pct}%"),
-        ("class:status", " · PLAN" if status.get("plan_mode") else ""),
-        ("class:status", "  |  / 命令 · Alt+Enter 换行"),
-    ]
+    pct = int(status.get("tokens", 0) / budget * 100) if budget else None
+    pressure = f"{pct}%" if pct is not None else "未知"
+    pressure = f" · 输入预算 {pressure}" if width >= 60 else f" · {pressure}"
+    mode = "PLAN " if status.get("plan_mode") else ""
+    hints = "  / 命令 · Alt+Enter 换行" if width >= 100 else "  / 命令" if width >= 60 else ""
+    reserved = get_cwidth(mode + pressure + hints)
+    profile = _fit_text(status.get("profile", "coding"), max(1, width - reserved - 2))
+    fragments = [("class:status.profile", f" {profile} "), ("class:status.plan", mode)]
+    model_room = width - get_cwidth(f" {profile} " + mode + pressure + hints)
+    if model_room >= 8:
+        model = _fit_text(status.get("model") or "未设置模型", model_room - 3)
+        fragments.append(("class:status", " · " + model))
+    pressure_style = "class:status.warning" if pct is not None and pct >= 80 else "class:status"
+    fragments.extend([(pressure_style, pressure), ("class:status", hints)])
+    return fragments
 
 
 def create_main_session(workspace: Path, skills: list = None, get_sessions=None, *,
@@ -212,11 +238,17 @@ def create_main_session(workspace: Path, skills: list = None, get_sessions=None,
         key_bindings=_make_bindings(),
         multiline=False,             # 默认单行，Alt+Enter 手动换行
         complete_while_typing=True,  # 输入 / 自动弹命令菜单
-        bottom_toolbar=(lambda: status_fragments(get_status())) if get_status else None,
+        bottom_toolbar=(lambda: status_fragments(
+            get_status(), width=get_app().output.get_size().columns,
+        )) if get_status else None,
         style=Style.from_dict({
             "bottom-toolbar": "noreverse",
             "status": "#888888 noreverse",
             "status.profile": "#d4a574 bold noreverse",
+            "status.plan": "ansiyellow bold noreverse",
+            "status.warning": "ansiyellow noreverse",
+            "prompt": "#d4a574 bold",
+            "prompt.mode": "ansiyellow bold",
             "completion-menu.completion": "bg:#262626 #d4d4d4",
             "completion-menu.completion.current": "bg:#45403a #ffdab3 bold",
             "completion-menu.meta.completion": "bg:#262626 #aaaaaa",
@@ -230,7 +262,7 @@ def main_input(session: PromptSession, plan_mode: bool = False) -> str:
 
     参数：
       session   - create_main_session() 返回的实例
-      plan_mode - Plan Mode 标志。True 时提示符加黄色 ⚡ PLAN 徽章
+      plan_mode - Plan Mode 标志。True 时提示符加黄色 PLAN 徽章
 
     返回：
       用户输入的字符串
@@ -239,11 +271,8 @@ def main_input(session: PromptSession, plan_mode: bool = False) -> str:
       KeyboardInterrupt - 用户按了 Ctrl+C
       EOFError - 用户按了 Ctrl+D
     """
-    # 提示符用 prompt_toolkit 的 HTML 上色（不用 rich，输入区只认 prompt_toolkit 格式）
-    if plan_mode:
-        styled = HTML("<ansiyellow><b>⚡ PLAN</b></ansiyellow> <ansicyan><b>You</b></ansicyan> › ")
-    else:
-        styled = HTML("<ansicyan><b>You</b></ansicyan> › ")
+    styled = [("class:prompt.mode", "PLAN ")] if plan_mode else []
+    styled.append(("class:prompt", "❯ "))
     return session.prompt(styled)
 
 

@@ -18,14 +18,16 @@
 
 import sys
 from datetime import datetime
-from pathlib import Path
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.cells import cell_len
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from auto_coding_machine.common.token_utils import get_token_count
+from auto_coding_machine.engine.events import sanitize_public_value
 from auto_coding_machine.engine.hook_manager import HookManager
 
 
@@ -45,34 +47,22 @@ if sys.platform == "win32":
 console = Console()
 
 # 主题色（集中定义，改配色只改这里）
-# 对话区分：user 暖色 / ai 冷色，一眼区分谁在说话
 THEME = {
-    "primary": "cyan",           # 主色：标题、边框
-    "accent": "bright_cyan",     # 强调：UI 元素
+    "primary": "default",        # 标题跟随终端背景
+    "accent": "#d4a574",          # 暖色强调
     "success": "green",          # 成功
     "warning": "yellow",         # 警告 / 需要输入
     "error": "red",              # 错误
-    "dim": "grey50",             # 次要信息
-    "tool": "blue",              # 工具调用
-    "user": "bright_magenta",    # 用户消息：暖色
-    "ai": "cyan",                # AI 消息：冷色
+    "dim": "dim",                # 次要信息
+    "tool": "#8bd5ca",           # 工具名称
+    "user": "#d4a574",           # 用户消息
+    "ai": "bright_black",        # 回答使用轻边框
 }
 
 
 # ============================================================
 # Banner（欢迎界面）
 # ============================================================
-
-
-def print_banner():
-    """打印欢迎 Banner。
-
-    宽终端显示渐变 Logo，窄终端自动使用紧凑 Panel，避免破版。
-    """
-    if console.width >= 86:
-        _print_big_banner()
-    else:
-        _print_compact_banner()
 
 
 _LOGO_LINES = [
@@ -96,58 +86,41 @@ _LOGO_COLORS = [
 ]
 
 
-def _print_big_banner():
-    """宽终端：大字 Logo + 渐变色 + 信息行。"""
+def print_banner():
+    """宽终端保留渐变大字 Logo，窄终端使用紧凑品牌标题。"""
     console.print()
-    for line, color in zip(_LOGO_LINES, _LOGO_COLORS):
-        console.print(Text(line, style=f"bold {color}", no_wrap=True), justify="center")
-
-    subtitle = Text()
-    subtitle.append("⚡ ", style="yellow")
-    subtitle.append("Coding Agent · CLI Demo · Phase 2.5", style=f"bold {THEME['primary']}")
-    console.print()
-    console.print(subtitle, justify="center")
-
-    info = Text()
-    info.append("Workspace ", style=THEME["dim"])
-    info.append(str(Path.cwd()), style="default")
-    info.append("   Commands ", style=THEME["dim"])
-    info.append("/help /quit", style=f"bold {THEME['accent']}")
-    console.print(info, justify="center")
-    console.print()
-
-
-def _print_compact_banner():
-    """窄终端：紧凑 Panel（宽度自适应，不破版）。"""
+    logo_width = max(cell_len(line) for line in _LOGO_LINES)
+    if console.width >= logo_width:
+        for line, color in zip(_LOGO_LINES, _LOGO_COLORS):
+            console.print(Text(line, style=f"bold {color}", no_wrap=True))
+        console.print()
     title = Text()
-    title.append("▐ ", style=THEME["primary"])
+    title.append("◆ ", style=THEME["accent"])
     title.append("AutoCoding Machine", style=f"bold {THEME['primary']}")
-    title.append("  Coding Agent · CLI Demo · Phase 2.5", style=THEME["dim"])
-
-    body = Text()
-    body.append("Workspace  ", style=THEME["dim"])
-    body.append(str(Path.cwd()), style="default")
-    body.append("\nCommands   ", style=THEME["dim"])
-    body.append("/help", style=f"bold {THEME['accent']}")
-    body.append("  ", style="default")
-    body.append("/quit", style=f"bold {THEME['accent']}")
-
-    console.print()
-    console.print(Panel(
-        body,
-        title=title,
-        title_align="left",
-        border_style=THEME["primary"],
-        padding=(1, 2),
-    ))
+    console.print(title)
+    console.print(Text("输入任务开始 · /help 查看命令", style=THEME["dim"]))
     console.print()
 
 
 def print_session_header(profile, model, workspace, budget, skill_count, resumed=False):
-    console.print(Text(f"  {profile}  /  {model or '未设置模型'}", style=THEME["dim"]))
-    console.print(Text(f"  {workspace}", style=THEME["dim"]))
-    console.print(Text(f"  {'恢复会话' if resumed else '新会话'} · 输入预算 {budget:,} · Skills {skill_count}", style=THEME["dim"]))
-    console.print(Text("  /profile 切换配置   /help 全部命令", style=THEME["dim"]))
+    identity = Text(f"  {profile}", style=f"bold {THEME['accent']}")
+    identity.append(f"  /  {model or '未设置模型'}", style=THEME["dim"])
+    identity.no_wrap = True
+    identity.overflow = "ellipsis"
+    directory = Text(f"  {workspace}", style=THEME["dim"], no_wrap=True, overflow="ellipsis")
+    budget_text = f"{budget:,}" if budget is not None else "未知"
+    state = Text(
+        f"  {'恢复会话' if resumed else '新会话'} · 输入预算 {budget_text} · Skills {skill_count}",
+        style=THEME["dim"],
+    )
+    console.print(Panel(
+        Group(identity, directory, state),
+        title=Text("会话", style=THEME["accent"]),
+        title_align="left",
+        border_style=THEME["ai"],
+        padding=(0, 0),
+        width=min(console.width, 86),
+    ))
     console.print()
 
 
@@ -168,37 +141,28 @@ def print_profiles(choices, current):
 
 
 def print_help():
-    """打印帮助（用 Table 排版，对齐更整齐）。"""
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column(style=f"bold {THEME['accent']}", no_wrap=True)
-    table.add_column(style="default")
-
-    table.add_row("/profile <配置>", "切换配置；不带参数查看清单，Tab 补全")
-    table.add_row("/plan", "进入 Plan Mode（只读，产出结构化计划；/exit 退出）")
-    table.add_row("/help", "显示帮助")
-    table.add_row("/status", "当前状态（模式/模型/会话/token/上下文占比）")
-    table.add_row("/cost", "本次会话 token 消耗")
-    table.add_row("/memory", "查看长期记忆（MEMORY.md + USER.md）")
-    table.add_row("/clear", "清屏 + 重置对话（JSONL 保留）")
-    table.add_row("/compact", "手动压缩上下文（带确认）")
-    table.add_row("/skills", "列出可用技能")
-    table.add_row("/skill <名字>", "把指定技能的内容注入对话（名字可 Tab 补全）")
-    table.add_row("/sessions", "列出历史会话（启动时用 --resume [id] 恢复）")
-    table.add_row("/resume <id>", "切换到指定会话（id 可 Tab 补全；不带 id 则列出）")
-    table.add_row("/prompt", "查看当前发给 LLM 的消息结构")
-    table.add_row("/quit", "退出（/exit 同义）")
-    table.add_row("", "")
-    table.add_row("[dim]示例[/dim]", "[green]读一下 src/auto_coding_machine/engine/contracts.py[/green]")
-    table.add_row("", "[green]搜索所有包含 ToolCall 的文件[/green]")
-    table.add_row("", "[green]列出 src/profiles 目录[/green]")
-
-    console.print(Panel(
+    """按使用目的组织命令，让启动帮助保持紧凑。"""
+    table = Table(show_header=False, box=None, padding=(0, 1))
+    table.add_column(style=f"bold {THEME['accent']}")
+    table.add_column(style=THEME["dim"])
+    rows = (
+        ("/profile", "查看或切换配置"),
+        ("/plan · /exit", "进入或退出只读计划模式"),
+        ("/status · /cost", "运行状态和本次用量"),
+        ("/sessions · /resume", "查看或恢复历史会话"),
+        ("/skills · /skill", "查看或加载技能"),
+        ("/memory · /prompt", "查看记忆或请求消息"),
+        ("/compact · /clear", "压缩上下文或清屏"),
+        ("/help · /quit", "查看帮助或退出"),
+    )
+    for command, description in rows:
+        table.add_row(command, description)
+    console.print(Group(
+        Text("命令", style=f"bold {THEME['primary']}"),
         table,
-        title="[bold]命令与示例[/bold]",
-        title_align="left",
-        border_style=THEME["dim"],
-        padding=(1, 1),
+        Text("Enter 发送 · Alt+Enter 换行 · Tab 补全", style=THEME["dim"]),
     ))
+    console.print()
 
 
 def print_skills(skills: list):
@@ -250,9 +214,7 @@ def print_sessions(sessions: list, current_id: str):
 
 def print_prompt_debug(messages: list):
     """显示当前会发给 LLM 的消息结构（/prompt 命令用）。"""
-    from auto_coding_machine.common.token_utils import get_token_count
-
-    total_tokens = count_tokens(messages)
+    total_tokens = get_token_count(messages)
     console.print(f"\n[{THEME['dim']}]共 {len(messages)} 条消息 · 约 {total_tokens} token[/{THEME['dim']}]")
 
     table = Table(show_header=True, box=None, padding=(0, 1))
@@ -268,7 +230,7 @@ def print_prompt_debug(messages: list):
         preview = content[:80].replace("\n", " ").replace("\r", "")
         if len(content) > 80:
             preview += "…"
-        table.add_row(str(i), role, str(len(content)), str(count_tokens([msg])), preview)
+        table.add_row(str(i), role, str(len(content)), str(get_token_count([msg])), Text(preview))
 
     console.print(table)
 
@@ -286,14 +248,13 @@ def print_prompt_debug(messages: list):
 
 
 def print_status_bar(llm, messages: list, token_budget: int):
-    """打印状态栏：首字延迟 + token 消耗 + 上下文压力条。"""
-    from auto_coding_machine.engine.context_manager import count_tokens
+    """显示本次用量和当前输入估算，保留服务端值的来源标记。"""
 
     parts = []
 
     # 首字延迟
     if llm.last_ttft_ms is not None:
-        parts.append(f"⏱ 首字 {llm.last_ttft_ms:.0f}ms")
+        parts.append(f"首字 {llm.last_ttft_ms:.0f}ms")
 
     # token 消耗
     if llm.total_prompt_tokens or llm.total_completion_tokens:
@@ -303,17 +264,15 @@ def print_status_bar(llm, messages: list, token_budget: int):
     if llm.last_prompt_tokens is not None:
         parts.append(f"上次输入 {llm.last_prompt_tokens}（服务端）")
 
-    # 上下文压力（进度条 + 数值）
+    # 输入估算与预算分开列明。
     # 上次请求用量不等于当前上下文，回复与工具结果可能已经追加进来了。
     ctx_tokens = get_token_count(messages, llm.model, tools=llm.tools_schemas)
     if token_budget > 0:
         pct = int(ctx_tokens / token_budget * 100)
-        filled = min(int(pct / 5), 20)  # 条形封顶，但数值保留超预算的真实比例
-        bar = "█" * filled + "░" * (20 - filled)
-        parts.append(f"输入估算 {bar} {ctx_tokens}/{token_budget} ({pct}%)")
+        parts.append(f"输入估算 {ctx_tokens:,}/{token_budget:,} ({pct}%)")
 
     if parts:
-        console.print(f"[{THEME['dim']}]  {' · '.join(parts)}[/{THEME['dim']}]")
+        console.print(Text("  " + " · ".join(parts), style=THEME["dim"]))
 
 
 def ask_permission_confirm(request: dict) -> bool:
@@ -336,10 +295,13 @@ def ask_permission_confirm(request: dict) -> bool:
     except (TypeError, ValueError):
         args_str = str(request["details"])
 
+    body = Text(request["summary"], style="bold")
+    body.append("\n\n" + args_str, style=THEME["dim"])
     console.print()
     console.print(Panel(
-        f"[bold]{request['summary']}[/bold]\n\n{args_str}",
-        title=f"[{THEME['warning']}]⚠ 需要确认[/{THEME['warning']}]",
+        body,
+        title=Text("需要确认", style=THEME["warning"]),
+        title_align="left",
         border_style=THEME["warning"],
     ))
     console.print(f"[{THEME['warning']}]同意执行？回车同意，输入 n 拒绝[/{THEME['warning']}]")
@@ -356,16 +318,22 @@ def ask_permission_confirm(request: dict) -> bool:
     return choice in ("", "y")
 
 
+def agent_reply_panel(reply: str, style: str, *, theme=None):
+    """同步和流式回答共用的轻量 Markdown 面板。"""
+    theme = theme or THEME
+    return Panel(
+        Markdown(reply),
+        title=Text("✦ Agent", style=f"bold {theme.get('accent', theme['ai'])}"),
+        title_align="left",
+        border_style=theme["ai"] if style == theme.get("success", "green") else style,
+        padding=(0, 1),
+    )
+
+
 def print_agent_reply(reply: str, style: str):
     """把 Agent 的回复渲染成 Markdown 面板（非流式回退时用）。"""
     console.print()
-    console.print(Panel(
-        Markdown(reply),
-        title="[bold]Agent[/bold]",
-        title_align="left",
-        border_style=style,
-        padding=(1, 2),
-    ))
+    console.print(agent_reply_panel(reply, style))
     console.print()
 
 
@@ -391,29 +359,25 @@ def print_history_replay(history: list):
             first_line = content.split("\n")[0]
             if len(first_line) > 200:
                 first_line = first_line[:200] + "…"
-            console.print(f"\n[bold {THEME['user']}]You ›[/bold {THEME['user']}] {first_line}")
+            line = Text("\n❯ ", style=f"bold {THEME['user']}")
+            line.append(first_line, style="default")
+            console.print(line)
         elif role == "assistant":
             tool_calls = msg.get("tool_calls")
             if tool_calls:
                 # 工具调用轮：只显示调了哪些工具，不展开参数
                 names = ", ".join(tc.get("function", {}).get("name", "?") for tc in tool_calls)
-                console.print(f"[{THEME['dim']}]  ⏺ 调用工具: {names}[/{THEME['dim']}]")
+                console.print(Text(f"  › 调用工具: {names}", style=THEME["dim"]))
             elif content:
                 # 文字回复：用和实时对话一样的 Markdown 面板，但用暗色边框区分
-                console.print(Panel(
-                    Markdown(content),
-                    title="[bold]Agent[/bold]",
-                    title_align="left",
-                    border_style=THEME["dim"],
-                    padding=(0, 2),
-                ))
+                console.print(agent_reply_panel(content, THEME["ai"]))
         # tool 消息（工具返回结果）直接跳过
     console.print(f"\n[{THEME['dim']}]── 回放结束，接着聊 ──[/{THEME['dim']}]")
 
 
 def turn_separator():
     """回合分隔线：让对话轮次之间有清晰的视觉边界。"""
-    console.print(f"[{THEME['dim']}]◇ {'─' * max(console.width - 4, 10)} ◇[/{THEME['dim']}]")
+    console.rule(style=THEME["dim"], characters="─")
 
 
 # ============================================================
@@ -432,8 +396,8 @@ def register_cli_hooks(hooks: HookManager):
     核心变化：不再是"一个对象实现一个接口"，而是"向 HookManager 注册多个回调"。
 
     注册的事件：
-      pre_tool   — 工具开始执行，卡片显示工具名 + 参数
-      post_tool  — 工具执行完，打印一行结果状态（✓ 耗时/预览 或 ✗ 错误类型）
+      pre_tool   — 显示工具请求和主要参数
+      post_tool  — 显示执行耗时、拒绝或失败原因类别
       done       — 任务完成
       cancelled  — 任务被取消
 
@@ -442,49 +406,34 @@ def register_cli_hooks(hooks: HookManager):
     """
 
     def on_pre_tool(**kw):
-        """工具开始执行：卡片显示工具名 + 参数（rich Panel）。"""
-        tool_name = kw.get("tool_name", "?")
-        arguments = kw.get("arguments") or {}
-
-        # 参数渲染成一行一个 key: value，方便确认模型到底要做什么
-        body_lines = []
-        for key, value in arguments.items():
-            text = str(value).replace("\n", " ").replace("\r", "")
-            if len(text) > 60:
-                text = text[:60] + "…"
-            body_lines.append(f"{key}: {text}")
-        body = "\n".join(body_lines) if body_lines else "(无参数)"
-
-        console.print(Panel(
-            body,
-            title=f"⏺ {tool_name}",
-            title_align="left",
-            border_style=THEME["tool"],
-            padding=(0, 1),
-            expand=False,
-        ))
+        """用短状态行显示工具及脱敏后的主要参数。"""
+        arguments = sanitize_public_value(kw.get("arguments") or {})
+        target = next((arguments[key] for key in ("path", "command", "query", "name")
+                       if key in arguments), None)
+        line = Text("  › ", style=THEME["dim"], no_wrap=True, overflow="ellipsis")
+        line.append(str(kw.get("tool_name", "?")), style=f"bold {THEME['tool']}")
+        if target is not None:
+            line.append("  " + str(target).replace("\n", " ").replace("\r", ""),
+                        style=THEME["dim"])
+        console.print(line)
 
     def on_post_tool(**kw):
-        """工具执行完：结果状态行（对齐在卡片下方）。
-
-        成功：✓ 耗时 · 结果首行预览
-        失败：✗ error_type
-        """
+        """成功显示耗时，拒绝或失败显示原因类别。"""
         error = kw.get("error", False)
-        error_type = kw.get("error_type", "ok")
-        content = kw.get("result_content") or ""
+        error_type = kw.get("error_type") or "unknown"
         duration_ms = kw.get("duration_ms") or 0
+        tool_name = str(kw.get("tool_name", "tool"))
         if error:
-            console.print(f"  [{THEME['error']}]✗ {error_type}[/{THEME['error']}]")
+            label = "拒绝" if error_type in ("permission", "hook_denied") else "失败"
+            line = Text(f"  × {tool_name} · {label} · {error_type}", style=THEME["warning"]
+                        if label == "拒绝" else THEME["error"])
         else:
-            # 结果预览：只取第一行，太长截断（完整内容模型会看到，人扫一眼就够）
-            first_line = content.split("\n", 1)[0].strip()
-            if len(first_line) > 60:
-                first_line = first_line[:60] + "…"
-            preview = f" · {first_line}" if first_line else ""
-            console.print(
-                f"  [{THEME['success']}]✓ {duration_ms / 1000:.1f}s{preview}[/{THEME['success']}]"
-            )
+            elapsed = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms / 1000:.1f}s"
+            line = Text(f"  ✓ {tool_name}", style=THEME["success"])
+            line.append(f" · {elapsed}", style=THEME["dim"])
+        line.no_wrap = True
+        line.overflow = "ellipsis"
+        console.print(line)
     def on_done(**kw):
         """任务完成。"""
         console.print(f"  [{THEME['success']}]✓ 完成[/{THEME['success']}]")
