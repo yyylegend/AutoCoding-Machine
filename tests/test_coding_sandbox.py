@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from src.profiles.coding.sandbox import WorkspaceSandbox
+from auto_coding_machine.profiles.coding.sandbox import WorkspaceSandbox
 
 
 class TestWorkspaceSandbox(unittest.TestCase):
@@ -12,7 +12,7 @@ class TestWorkspaceSandbox(unittest.TestCase):
         self.sandbox = WorkspaceSandbox(self.root)
 
     def test_resolve_relative_inside(self):
-        target = self.sandbox.resolve("src/engine/contracts.py")
+        target = self.sandbox.resolve("src/auto_coding_machine/engine/contracts.py")
         self.assertIsNotNone(target)
         self.assertTrue(str(target).endswith("contracts.py"))
 
@@ -29,9 +29,9 @@ class TestWorkspaceSandbox(unittest.TestCase):
         self.assertFalse(self.sandbox.is_inside("../.."))
 
     def test_relpath(self):
-        full = (self.root / "src" / "engine" / "contracts.py").resolve()
+        full = (self.root / "src" / "auto_coding_machine" / "engine" / "contracts.py").resolve()
         rel = self.sandbox.relpath(full)
-        self.assertEqual(rel.replace("\\", "/"), "src/engine/contracts.py")
+        self.assertEqual(rel.replace("\\", "/"), "src/auto_coding_machine/engine/contracts.py")
 
 
 if __name__ == "__main__":

@@ -17,10 +17,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.engine.contracts import PermissionDecision, ToolCall
-from src.engine.permission_manager import PermissionManager
-from src.profiles.coding.tools import CodingTools
-from src.profiles.coding.tools.run_bash import (
+from auto_coding_machine.engine.contracts import PermissionDecision, ToolCall
+from auto_coding_machine.engine.permission_manager import PermissionManager
+from auto_coding_machine.profiles.coding.tools import CodingTools
+from auto_coding_machine.profiles.coding.tools.run_bash import (
     ALLOWED_COMMANDS,
     _check_whitelist,
     _is_safe_command,
@@ -42,9 +42,8 @@ class TestWhitelistCheck(unittest.TestCase):
         self.assertTrue(_check_whitelist("python script.py"))
 
     def test_python_full_path_in_whitelist(self):
-        """完整路径的 python 也能匹配（取 basename）。"""
-        # 模型可能传 sys.executable 完整路径
-        self.assertTrue(_check_whitelist("e:\\venv\\Scripts\\python.exe script.py"))
+        """当前系统完整路径的 python 也能匹配（取 basename）。"""
+        self.assertTrue(_check_whitelist(f"{sys.executable} script.py"))
 
     def test_python_exe_no_path_in_whitelist(self):
         """python.exe（带后缀）也能匹配。"""
@@ -294,7 +293,7 @@ class TestRunBashTimeout(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    @patch("src.profiles.coding.tools.run_bash.subprocess.run")
+    @patch("auto_coding_machine.profiles.coding.tools.run_bash.subprocess.run")
     def test_timeout_handled(self, mock_run):
         """超时被正确捕获并返回 execution 错误。"""
         import subprocess as sp
@@ -307,7 +306,7 @@ class TestRunBashTimeout(unittest.TestCase):
         self.assertEqual(result.error_type, "execution")
         self.assertIn("超时", result.content)
 
-    @patch("src.profiles.coding.tools.run_bash.subprocess.run")
+    @patch("auto_coding_machine.profiles.coding.tools.run_bash.subprocess.run")
     def test_command_not_found_handled(self, mock_run):
         """命令不存在被正确捕获。"""
         mock_run.side_effect = FileNotFoundError("pip not found")
@@ -377,9 +376,9 @@ class TestRunBashPermission(unittest.TestCase):
 
     def test_run_bash_is_ask_with_tool_manager(self):
         """通过 ToolManager 注册时 run_bash 权限为 ASK。"""
-        from src.engine.tool_manager import ToolManager
-        from src.profiles.coding.sandbox import WorkspaceSandbox
-        from src.profiles.coding.tools import run_bash
+        from auto_coding_machine.engine.tool_manager import ToolManager
+        from auto_coding_machine.profiles.coding.sandbox import WorkspaceSandbox
+        from auto_coding_machine.profiles.coding.tools import run_bash
 
         tmp = tempfile.TemporaryDirectory()
         try:

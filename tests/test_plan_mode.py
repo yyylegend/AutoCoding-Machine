@@ -8,9 +8,9 @@
 
 import unittest
 
-from src.engine import PermissionDecision, PermissionManager, ToolCall
-from src.profiles.coding.plan_mode import PLAN_MODE_INSTRUCTIONS, get_plan_mode_injection
-from src.profiles.coding.system_prompt import get_system_prompt
+from auto_coding_machine.engine import PermissionDecision, PermissionManager, ToolCall
+from auto_coding_machine.profiles.coding.plan_mode import PLAN_MODE_INSTRUCTIONS, get_plan_mode_injection
+from auto_coding_machine.profiles.coding.system_prompt import get_system_prompt
 
 
 class TestPermissionManagerPlanMode(unittest.TestCase):

@@ -1,0 +1,15 @@
+# 示例不会自动出现在 /profile 清单；复制到 profile_configs/ 后才会列出。
+# name 同时决定状态目录；换名字就会得到独立的记忆与会话。
+name: beginner-review
+kind: review
+prompt: |
+  你是面向初学者的代码审查助手。
+  先解释问题会在什么情况下发生，再引用文件与代码证据，最后给出最小修改建议。
+  不修改文件，不执行命令，不把推测说成已验证的结果。
+tools: [read_file, list_dir, glob, grep, load_skill, search_skills, recall_history]
+# [] 表示不加载 Skills；null 表示使用所有已发现 Skills；列表表示只启用指定名称。
+skills: []
+# 输入 token 预算，须为模型输出与消息封装预留空间。
+context_budget: 16000
+load_instructions: true
+# model: your-local-model-id

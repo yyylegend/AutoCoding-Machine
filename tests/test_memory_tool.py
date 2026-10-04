@@ -6,10 +6,10 @@
 
 import pytest
 
-from src.engine.contracts import ToolCall
-from src.engine.tool_manager import ToolManager
-from src.profiles.coding.sandbox import WorkspaceSandbox
-from src.profiles.coding.tools import CodingTools, memory_tool
+from auto_coding_machine.engine.contracts import ToolCall
+from auto_coding_machine.engine.tool_manager import ToolManager
+from auto_coding_machine.profiles.coding.sandbox import WorkspaceSandbox
+from auto_coding_machine.profiles.coding.tools import CodingTools, memory_tool
 
 
 @pytest.fixture
@@ -79,8 +79,8 @@ def test_permission_manager_wiring_allows_memory(tmp_path):
     memory / search_skills 被硬编码白名单当未知工具 DENY，
     模型嘴上说记住了实际什么都没写进去（假记忆）。
     """
-    from src.engine.contracts import PermissionDecision
-    from src.engine.permission_manager import PermissionManager
+    from auto_coding_machine.engine.contracts import PermissionDecision
+    from auto_coding_machine.engine.permission_manager import PermissionManager
 
     tools = CodingTools(tmp_path)
     permission = PermissionManager(tool_manager=tools.get_manager())

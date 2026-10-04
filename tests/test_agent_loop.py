@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from src.engine import (
+from auto_coding_machine.engine import (
     MachineLoop,
     AgentResponse,
     BudgetPolicy,
@@ -19,7 +19,7 @@ from src.engine import (
     PermissionManager,
     ToolCall,
 )
-from src.profiles.coding.tools import CodingTools
+from auto_coding_machine.profiles.coding.tools import CodingTools
 
 
 class TestMachineLoop(unittest.TestCase):
@@ -335,7 +335,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
 
     def setUp(self):
         """创建一个干净的 adapter（不需要真正的 tools）。"""
-        from src.profiles.coding.llm_adapter import StreamingAdapter
+        from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
         from rich.console import Console
 
         # 测试用：给一个安静的 console 和简单的 theme
@@ -369,7 +369,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
 
         # 模拟 llm_client.chat() 的返回格式
         # adapter 内部不直接调 LLM，所以我们要 mock 它的 chat 方法
-        import src.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
 
         original_chat = adapter_module.chat
         try:
@@ -396,7 +396,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
             ],
         }
 
-        import src.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
 
         original_chat = adapter_module.chat
         try:
@@ -419,7 +419,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
             "tool_calls": [],
         }
 
-        import src.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
 
         original_chat = adapter_module.chat
         try:
@@ -443,7 +443,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
             "tool_calls": [],
         }
 
-        import src.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
 
         original_chat = adapter_module.chat
         try:
@@ -461,7 +461,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
 
         模拟 chat_stream 边回调 token 边返回 usage/ttft，验证适配器正确解析。
         """
-        import src.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
 
         def fake_stream(messages, tools=None, on_token=None, **kw):
             # 模拟流式输出两个 content 增量

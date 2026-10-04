@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.engine.contracts import ToolCall
-from src.profiles.coding.tools import CodingTools
+from auto_coding_machine.engine.contracts import ToolCall
+from auto_coding_machine.profiles.coding.tools import CodingTools
 
 
 class TestCodingTools(unittest.TestCase):

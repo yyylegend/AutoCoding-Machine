@@ -1,43 +1,234 @@
 # Architecture
 
-## 目标
+配套 [交互式架构图](diagrams/README.md) 展示整体结构、[Harness 包结构](diagrams/harness-package-structure.html) 和完成验证流程；细节与限制以本文和代码为准。术语见 [CONTEXT.md](../CONTEXT.md)；公共事件与权限交互的约定见 [ADR 0001](adr/0001-harness-event-contract.md)，实施记录见[近期计划](plans/2026-09-24-harness-public-events.md)。
 
-公开版只呈现一个 Coding Agent。CLI 是外部交互入口，Runtime 是内部深模块，隐藏模型循环、上下文、权限、记忆和工具组装细节。
+本文描述当前代码实现。Python 包名为 `auto_coding_machine`，实现位于标准源码布局 `src/auto_coding_machine/`，本地 editable 安装可供其他项目使用。可复用 Harness 的目标见 [模块化 Harness 计划](plans/2026-09-22-modular-harness.md)；`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的演进背景见[运行时边界历史记录](archive/2026-09-05-runtime-boundaries.md)。
+
+未来方向统一放在 [plans 入口](plans/README.md)。外部记忆已有只读契约、测试替身和腾讯 Gateway HTTP Adapter；已用本机 Gateway 和真实模型生成的合成 L1 记忆验证召回、身份隔离及临时请求注入，腾讯云部署尚未验证。显式写回已实现但默认关闭，插件安装仍是后续规划。长任务与上下文专项优化目前暂缓。
+
+## 当前结构
+
+CLI 是外部交互入口，Coding、Review 与 Companion 使用同一运行时，由 `auto_coding_machine.profiles.config` 决定能力组合。CLI 仍负责终端 Hook、模型适配器和预算元数据展示；工具、权限、上下文、完成验证和预算对象由 Factory 统一组装。会话视图已收拢到 `AgentSession`，单次任务的启动、权限恢复和取消已收拢到 `AgentRun`。
+
+```text
+src/auto_coding_machine/
+├── __init__.py      # 稳定的公共导入入口
+├── common/          # 模型适配、HTTP 调用、Token 与文本工具
+├── config/          # 环境与运行设置
+├── engine/          # 契约、MachineLoop、权限与 Hook
+├── memory/          # 本地记忆、MemoryProvider 契约与 Tencent Adapter
+├── profiles/        # Coding、Review、Companion 和各自的工具策略
+├── runtime/         # Factory、AgentRuntime、AgentSession、AgentRun
+└── __main__.py      # CLI 启动入口
+
+src/__main__.py      # 兼容旧的 python -m src 命令
+```
+
+产品专属工具和终端代码仍在 `profiles/coding/`；通用 Engine 和 Runtime 不依赖 CLI 入口。当前提供本地 editable 安装，尚未发布到 PyPI。
+
+### 当前状态由谁持有
+
+| 状态 | 当前持有者 |
+| --- | --- |
+| 当前 Profile 与配置切换 | CLI 的 `run_cli` 外层循环 |
+| 当前 store、history、压缩视图 | `AgentSession`；Plan Mode 仍由 CLI 局部变量持有 |
+| 对原始会话的读写 | `SessionStore`；`AgentSession` 追加用户/技能消息，`AgentRun` 与 `MachineLoop` 追加工具/助手消息 |
+| 消息组装与运行组件引用 | `AgentRuntime`、`RuntimeRegistry` |
+| 单次任务的取消、当前结果与权限恢复 | `AgentRun`；CLI 只收集用户的批准结果 |
+| 执行轮数 | `MachineLoop`；权限暂停恢复时由 `AgentRun` 传回暂停轮次，一次任务的 `max_turns` 预算连续计数，不重新起算 |
+| 文件基线、验证版本、候选回答 | Coding 的 `CompletionGate` |
+| 工具可用范围与资源 | `RuntimeComponents` 中的 `ProfileTools`、`ToolEnvironment`、`ToolManager` |
+| 运行记录 | `RunTrace` 包装模型调用，并订阅 typed `AgentEvent` |
+
+目前已有第一切片的 `AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent`，但它们不替代 `MachineLoop`。`AgentSession` 保留 JSONL 作为原始事实源，管理压缩和清屏后的进程内视图；`AgentRun` 持有一次任务的消息、取消令牌和待确认工具，并在确认后统一触发事件、回填消息、写入 Session 再恢复循环。同一模型回复内的多个工具调用按顺序成批处理：某个调用等待审批时，同批剩余调用随暂停结果保存，恢复后按原顺序继续，已执行的调用不重复执行；用户拒绝只影响当前调用，剩余调用继续各自的权限检查；只有取消会中止批次，未执行调用补明确的「未执行」回执。取消是协作式取消：等待审批期间取消后，随后到达的批准也不执行工具，已发生的副作用不会被撤回。`RequestView` 负责历史召回和临时状态追加；旧的按名称 Hook 仍保留给 CompletionGate 等控制策略。`ToolEnvironment` 仍继承 `WorkspaceSandbox`。
+
+审批恢复时，未完成的工具批次执行完毕后再进行上下文压缩。最新工具批次超过消息数量或 Token 预算时，调用声明及其回执一起保留，避免产生孤立的工具结果。最后一个工具完成后收到取消请求，任务返回 `cancelled`；回执写入失败仍返回 `session_write_failed`。
+
+## Profiles 与共享模块
+
+`python -m auto_coding_machine --profile <名称或YAML路径>` 在启动时读取不可变 Profile。`python -m src` 暂时保留为兼容入口。配置解析拒绝未知字段、非法名称和超出类型范围的工具；TUI 的 `/profile` 在输入空闲时结束旧会话循环，重新组装 Profile 并开新会话；不在运行中的循环内替换组件，也不支持动态 Python 插件。
+
+| 模块 | 唯一负责的事情 |
+| --- | --- |
+| `profiles/config.py` | 内置默认值、YAML 校验、Profile 状态目录 |
+| `runtime/factory.py` | 创建运行时并连接组件；保留 `create_coding_runtime` 兼容入口 |
+| `runtime/tools.py` | 按 Profile 注册工具，把记忆、Skills 和会话范围传给工具 |
+| `runtime/skills.py` | 发现与筛选 Skills，搜索、加载、CLI 使用同一启动清单 |
+| `memory/` | 本地 Markdown 记忆；外部只读召回契约、测试替身与临时请求注入 |
+| `runtime/history.py` | JSONL 历史检索，供工具和自动召回复用 |
+| `runtime/context.py`、`context_selector.py`、`prompts.py` | 上下文预算、摘要、召回及指令注入 |
+| `engine/request_view.py` | 组合本次请求的历史召回和临时状态，不修改原始消息 |
+| `engine/events.py`、`engine/hook_manager.py` | typed 执行事件流与兼容的按名称 Hook |
+| `common/model_adapter.py` | 无界面的模型调用和响应解析 |
+| `runtime/trace.py` | 独立诊断记录，不参与模型历史召回 |
+
+Engine 不需要知道 Companion 的人格或 Coding 的提示词。Coding 可通过 Profile 的 `verify_on_stop` 启用完成验证门；Review 不注册写工具；Companion 不注册文件和 Shell 工具，并默认关闭 Coding 指令文件加载。
+
+`ProfileTools` 以筛选后的技能清单决定是否注册技能入口：清单为空时，`search_skills` 和 `load_skill` 既不出现在模型工具定义中，也不能被执行；`skills=()` 明确不使用技能时，启动阶段直接跳过技能目录扫描。低层搜索工具仍处理空清单，明确区分“没有可用技能”和“关键词不匹配”。
+
+所有 Profile 都将 sessions 和 input_history 放在 `.autocoding/profiles/<name>/` 下；runs 只有在 `trace_enabled: true` 时才创建。默认 Coding 的项目记忆仍兼容 `.autocoding/MEMORY.md`，用户记忆仍兼容全局 USER.md。首次启动会把旧的 `.autocoding/sessions`、`runs` 和 `input_history` 移到 `profiles/coding/`，只在目标不存在时移动文件。这是应用状态分离，不是操作系统级隔离。
+
+模型 ID 覆盖同时影响主调用和摘要。显式输入预算优先；自定义模型查询自己的窗口，运行时重建时重新解析，不跨模型或配置变更缓存预算。每个 ContextManager 固定模型计数器，估算包含消息元数据、封装余量和工具定义；工具开销只从每次请求预算中扣一次。已知模型走 tiktoken 官方映射，未知模型明确标为通用回退，Qwen 精确 tokenizer 适配仍待专项优化。
+
+`/status` 分开展示当前输入估算、上次请求的服务端输入用量、窗口来源与输入预算。`/cost` 是每次用户任务的已报告用量，不含摘要调用；缺失 usage 不当作零消耗。窗口及计数能力的具体边界见 [配置指南](profiles.md#token-用量与模型窗口)。
+
+旧 `profiles/coding/` 下的 Skills、上下文入口保留兼容导出，实际实现只有共享层的一份。终端渲染目前仍在该目录内，无界面调用不依赖它。
+
+## TUI 与配置切换
+
+`run_cli` 用外层循环管理 Profile，内层会话循环返回所选配置。切换清除旧 Plan Mode、权限对象和压缩视图，保留原始 JSONL。输入历史按 Profile 的状态目录保存，避免上下键带出其他配置的输入。
+
+切换清单包含内置预设与工作区 `profile_configs/` 下的有效 YAML；`examples/profiles/` 只存教学示例，不参与自动发现。自定义配置通过路径加载，列表名称尚不作为别名解析。
+
+`cli_input.py` 负责命令补全、按键和输入底栏；`cli_ui.py` 负责渐变 Banner、回复面板、工具参数卡片和状态展示。底栏所需的 token 估算只在进入输入前更新，不在每次按键重绘时重新计算。流式和非流式输出都使用 Markdown 面板，完成验证门继续决定内容何时展示。
 
 ## 调用流程
 
 ```text
 User input
-  → CLI assembles messages
+  → CLI calls AgentRuntime.build_messages
+  → AgentRuntime.create_session rebuilds the current session view
+  → AgentSession.begin_run appends the user message and creates AgentRun
+  → RequestView temporarily recalls old-session context and appends AgentStatusBar
   → MachineLoop asks the model
   → Permission and Hook checks
-  → ToolManager executes one tool
+  → ToolManager executes one tool, or AgentRun resolves a user confirmation
   → Tool result returns to the model
+  → CompletionGate checks validation evidence (Coding only)
   → Final reply or next tool call
 ```
 
 ## 模块
 
-### `src/engine`
+### `auto_coding_machine.engine`
 
-与具体入口无关的执行内核：契约、循环、上下文、权限、守卫、Hook、会话、记忆和工具注册。
+与具体入口无关的执行内核：契约、循环、上下文、权限、守卫、Hook、会话和工具注册。
 
-### `src/runtime`
+### `auto_coding_machine.memory`
 
-提供组装 seam。`create_coding_runtime()` 把 Engine 与 Coding Profile 组合成可运行对象，调用方不需要了解内部依赖顺序。
+外部调用方从 `auto_coding_machine.memory` 导入记忆契约和 Tencent Adapter；实现仍位于本目录。本地 Markdown 记忆保留文件读写、路径创建和会话启动注入。`external.py` 定义只读 `MemoryProvider.recall` 和单独的写入 `MemoryWriter.capture`；写入接口默认关闭。`tencent.py` 通过 Gateway v3 的 `/v3/atomic/search` 召回 L1，并用 `/v3/conversation/add` 保存明确启用的已完成轮次；只包含用户输入和最终助手回复，不包含工具过程。两者都要求明确的 Team、Agent、User 身份。写入发生在本地任务成功落盘之后；失败在 `result.memory_writeback` 单独可见，超时标为 `unknown` 且不自动重试，避免重复入库。远端记录由 MemoryCore 管理，不随本地 `/clear` 删除；删除和保留管理仍由服务端负责。Phase 3 已用本机 Gateway 和合成 L1 记忆验证正向召回、错误用户隔离及 Harness 请求视图；腾讯云部署尚未验证。
 
-### `src/profiles/coding`
+### `auto_coding_machine.runtime`
 
-Coding Agent 的实现：系统提示词、LLM adapter、CLI、Plan Mode、沙箱、技能发现和代码工具。
+提供组装入口。`build_runtime_components()` 统一创建工具、权限、上下文、完成验证、预算和状态栏；`create_runtime()` 把这组组件与 Engine、Profile 组合成 `AgentRuntime`。外部 Python 调用方从 `auto_coding_machine` 导入 `open_harness_session` 打开本地 JSONL 会话并返回 `AgentSession`；CLI 用同一入口传入已准备好的终端组件，并从 Factory 读取预算信息。`open_harness_session(..., on_event=callback)` 可注册会话级同步观察者；它收到安全的 `AgentEvent` 副本，不能通过返回值控制执行，也不会自动批准权限。CLI 仍负责终端适配器和交互。调用方通过 editable 依赖安装本地包，模型配置从调用方工作目录或进程环境读取；尚未发布到 PyPI。
 
-### `src/common`
+公共入口可显式传入具有 `session_id`、`load()`、`append()` 的会话存储；默认实现仍是 JSONL。单次任务和可选运行记录已能使用不带文件路径的存储对象。使用 JSONL `SessionStore` 打开会话时，自动历史召回扫描该 Store 的文件目录；使用其他存储打开时，这一路召回默认关闭，避免混入本地 JSONL 历史。其他存储的跨会话检索尚未接入公共入口。
 
-少量跨模块基础能力：日志、OpenAI-compatible HTTP 客户端和 Token 计数。
+Python 调用方也可显式传入 `tools=`，复用 `ProfileTools` 和 `ToolManager` 注册自己的工具；工具定义与权限仍由同一份注册表决定。CLI 继续使用按 Profile 筛选的内置工具，YAML 不会动态导入 Python 工具。
+
+无界面调用的最短路径：
+
+```python
+from auto_coding_machine import open_harness_session
+
+session = open_harness_session(workspace, model_fn, profile=profile)
+run = session.begin_run("检查代码")
+result = run.start()
+```
+
+`model_fn(messages)` 由调用方提供，返回 `AgentResponse`。`result["status"]` 可以是 `success`、`need_input`、`permission_required`、`failed` 或 `cancelled`，各状态的附加字段和三类错误（配置错误抛异常、调用方式错误抛 `RuntimeError`、运行失败走结果）见 [Cookbook 的结果与事件契约](harness-cookbook.md#6-运行结果与事件契约)；权限暂停时从 `result["permission_request"]` 读取安全摘要和详情，再用同一个 Run 显式调用 `resolve_permission(approved=...)`。`permission_required` 和 `permission_resolved` 事件分别表示等待决定与决定结果；批准不等于工具成功。取消时用 `run.cancel()`。任务结束后可调用 `session.refresh()` 更新进程内会话视图；若返回 `session_write_failed`，需先检查实际操作和会话文件，不能把内存结果当作已保存记录。`resume` 传会话 ID 可恢复指定会话，传空字符串恢复最近会话；目标不存在时抛出 `ValueError`。
+
+会话写入失败返回 `failed/session_write_failed`，不再把未保存的回复报告为成功。工具若已执行，返回值保留 `tool_result`，本次任务停止且不会自动重试；CLI 停止当前会话并提示检查实际副作用。重开会话时，缺少回执的工具调用只补“执行状态未知”消息，不能据此断言工具未执行。JSONL 仍是跨进程恢复的来源，内存中的失败结果不会自动补写。
+
+### `auto_coding_machine.profiles.coding`
+
+Coding 专属系统提示词、完成验证、Plan Mode、沙箱和代码工具，以及保留原位置的 CLI 和终端流式渲染。
+
+### `auto_coding_machine.common`
+
+跨模块基础能力：日志、OpenAI-compatible HTTP 客户端、无界面模型适配、文本裁剪和 Token 计数。
+
+## 三层记忆模型
+
+理解本项目的关键：同一段信息在不同层里的形态不一样，职责也不一样。
+
+| 层 | 载体 | 谁写 | 特点 |
+| --- | --- | --- | --- |
+| 精选记忆 | `MEMORY.md` / `USER.md`（Markdown） | 模型通过 memory 工具 | 有容量上限，跨会话注入；写操作加锁 + 原子替换；权限按动作分级（`add` 自动，`replace`/`remove` 需确认） |
+| 原始会话 | `.autocoding/profiles/<name>/sessions/*.jsonl` | `AgentSession`、`AgentRun` 与 MachineLoop 通过 SessionStore 追加 | 作为恢复对话的依据，不因压缩而改写 |
+| 压缩视图 | 进程内消息列表 | ContextManager 生成，CLI 与循环使用 | 不替换原始会话；发送给模型的视图可出现在独立诊断记录中 |
+
+压缩会丢细节，但丢掉的内容始终躺在 JSONL 里，模型可以用 `recall_history` 跨会话找回
+（扫描当前 Profile 最近 10 个 session，BM25 检索；语料过小时 BM25 的 IDF 会退化为 0，
+此时自动改用关键词覆盖匹配兜底，避免"明明有却搜不到"）。
+
+## 自动上下文选择
+
+`ContextSelector` 在每次模型调用前，以最新用户消息为查询，从旧 session 自动召回相关历史：
+
+- 使用与 `recall_history` 相同的 BM25 检索实现，不额外调用 LLM；
+- 排除当前 session，默认至少命中 2 个查询词，单词查询自动降为命中 1 个；
+- 最多注入 2 条、历史正文不超过 2000 字符；同一用户消息在工具循环中复用缓存；
+- 召回结果只是本次请求的临时 system 消息，不追加到工作 messages 或原始会话 JSONL；开启运行记录时，实际请求视图会保存到 runs 目录；
+- 检索失败时记录 warning 并跳过，不阻断 Agent 主任务。
+
+Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/resume` 不允许传入路径跳转至其他目录。工具注册表存在时，权限管理器不再用旧默认表放行未注册工具。
+
+## Agent 状态栏
+
+`AgentStatusBar` 在每次模型调用前，把 Harness 维护的当前状态追加到临时请求视图末尾。它使用 `user` 消息槽位承载明确标记的 `<agent_status>` 数据，不修改稳定 system 前缀，也不写入 `messages` 或 Session JSONL。
+
+当前由代码确定性维护的字段包括：当前用户目标、Profile、模型、轮次预算、工具调用数、最近工具、最近工具失败、工作目录、操作系统和 Coding 完成验证状态。状态栏是原始轨迹的短投影；当前项目还没有结构化 TODO / current_step 数据源，因此不会从模型文本中猜测这些字段。状态栏本身也不是权限边界，工具权限、沙箱和完成验证仍在执行层生效。
+
+状态栏由 `MachineLoop` 的任务状态生成，通过 `RequestView` 追加到本次模型请求；工具计数和失败信息来自统一 `AgentEvent` 流，因此自动执行和人工确认后的工具结果使用同一条记录路径。
+
+## 诊断记录与原始会话
+
+`runs/<session-id>.jsonl` 保存配置、Skills 内容指纹、实际请求视图、模型响应及用量、模型调用与工具耗时。`/resume` 同时切换日志目标。没有 SessionStore 的程序调用不自动创建诊断文件。
+
+诊断记录可以包含自动召回、压缩和验证提示，原始会话仍只保留对话流水，两者不会混合检索。日志写入失败不会阻断任务。记录可以帮助检查当时的配置与输入，但不承诺模型输出或工具副作用可确定性回放。
+
+## 上下文摘要与超限的失败策略
+
+- Profile 设置 `context_budget` 时直接使用该输入预算，调用方负责预留输出空间；这种情况下不再查询模型窗口，业务调用方可完全离线启动。未设置时：默认模型优先使用 `CODING_CONTEXT_LENGTH`，否则查询匹配模型的 `/models` 元数据；llama.cpp 使用 `/props` 的部署 `n_ctx`，不使用 `n_ctx_train`。覆盖成不同模型时单独查询，不沿用默认模型窗口。查询失败显示窗口未知，仅按 128K 假设计算回退预算。自动输入预算最多占窗口的 80%，同时预留最大输出和估算误差空间。
+- 摘要默认**关闭**（`.env` 的 `CONTEXT_SUMMARY_ENABLED=false`）：不调用 LLM，只做安全截断。
+- 开启后，异常、超时、HTTP 错误、空响应统一视为失败，但**不中断任务**：
+  改为插入一段确定性摘录（原始目标 / 近期决定 / 报错现场 / 涉及文件，总长 ≤ 4000 字符，
+  开头标注「仅作历史参考」）。
+- 同一批旧消息失败后进入 10 分钟进程内冷却，冷却期内不再重复请求模型；
+  手动 `/compact`（`force=True`）可绕过冷却立即重试。
+- 上下文超限（HTTP 400/413 且响应体含 context-length 关键词）抛领域异常，
+  MachineLoop 强制压缩后**只重试一次**；压缩无进展或二次仍超限则明确失败，绝不无限循环。
+
+## 完成证据门
+
+`CompletionGate`（Coding Profile 专属，`src/auto_coding_machine/profiles/coding/completion_gate.py`）
+在 Coding Profile 的 `verify_on_stop` 生效时负责交付前的修改验证检查，不判断整个用户需求是否完成。该选项默认关闭；Profile YAML 可开启或关闭，环境变量 `CODING_VERIFY_ON_STOP` 优先覆盖。Gate 先判断是否有需要验证的代码净修改，再检查验证时序：
+
+- **文件净变化**：`pre_tool` Hook 在写工具首次触碰路径前拍基线快照
+  （存在性 + SHA-256，分块计算）；`evaluate` 时重读全部跟踪路径与基线比较。
+  临时文件建了又删、文件改回原样都不算净变化；读取失败保守当作有变化。
+- **新鲜验证**：最后一次真实修改之后，`run_test` 成功或 token 级白名单命中的
+  `run_bash` 命令（pytest / lint / build 类）以退出码 0 完成。先测试后修改
+  属于过期证据；验证后再修改自动失效；消失的临时写入不影响已有验证。
+
+候选回答（candidate response）状态机：
+
+- 无净变化或只有文档修改时直接放行，不要求产生代码修改或运行测试；
+- 有未验证代码净修改时，将回答作为**候选回答**，与当时的有效修改版本绑定；
+- 证据不足时保留候选，插入运行时验证提示（synthetic nudge）继续循环；
+  nudge 和被拒绝的候选**不写入 Session JSONL**，最终交付的回答正常写入；
+- 验证通过且版本仍一致时复用原候选回答并附验证标记，模型的验证回执不得顶替实质内容；
+  期间发生新的真实净修改则旧候选作废，等待新候选；
+- 连续两次无证据返回 `verification_required`，但候选回答 + 未验证标记
+  照样交付；轮数耗尽时，仅交付仍与当前有效修改版本一致的 pending candidate。
+
+能力边界：净修改跟踪覆盖 `write_file`、`edit_file` 触碰的路径，不是整个工作区的变更审计；Shell 或外部程序的任意写入没有同等完整的跟踪。验证命令成功只说明对应检查成功，当前不判断测试是否覆盖修改，也不判断所有需求是否满足。此机制不是安全隔离或代码正确性保证。
+
+流式展示两阶段提交：`StreamingAdapter` 依据 `should_publish_stream()` 决定
+正常流式渲染或静默缓冲（token 照收、不建持久面板）；`last_streamed` 只表示
+最终回答已持久展示。用户每个任务最多看到一份持久最终回答。
+
+`read_file` 支持 `start_line` / `end_line`（1-based，含端点）分页读取长文件，
+带真实行号和续读建议；长文件不再需要临时脚本。
 
 ## 关键设计选择
 
-1. **工具是模型唯一的副作用入口。** 所有文件和命令操作都经过 ToolManager。
+1. **工具是模型请求操作环境的入口。** 模型发起的工具调用由 ToolManager 执行；会话、输入历史及诊断的持久化由宿主程序负责。
 2. **权限与执行分离。** PermissionManager 决定是否执行，工具只负责自身行为。
+   权限支持按调用参数动态判定（如 memory 工具按 `action` 区分），静态工具行为不变。
 3. **Profile 负责组合。** Engine 不依赖 Coding Agent，Coding Profile 在 Runtime seam 注册专属能力。
 4. **会话使用追加写。** JSONL 保留原始消息流水，压缩只影响运行时上下文。
 5. **安全默认拒绝。** 未注册工具、保护路径和异常检查不会静默放行。
+6. **可选的 Coding 修改验证。** 启用 `verify_on_stop` 时，Gate 跟踪写工具触碰的文件及修改后的验证；这不等于独立验收任务正确性。Review 与 Companion 不使用该验证门。
+7. **每个工具调用都有回执或明确的未执行原因。** 一批调用按顺序处理，审批暂停保留同批剩余调用、恢复后继续，已执行的不重复；取消是协作式取消，未执行调用补「未执行」回执，会话历史始终完整可恢复。

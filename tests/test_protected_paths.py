@@ -1,6 +1,6 @@
 """保护路径策略测试。"""
 
-from src.runtime.protected_paths import create_protected_path_check
+from auto_coding_machine.runtime.protected_paths import create_protected_path_check
 
 
 def test_protected_path_check_blocks_sensitive_write_paths(tmp_path):

@@ -1,0 +1,54 @@
+"""Coding Agent 的集中配置。"""
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+load_dotenv(Path.cwd() / ".env")
+
+
+def _optional_bool(name: str) -> bool | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in ("true", "1", "yes", "on"):
+        return True
+    if normalized in ("false", "0", "no", "off"):
+        return False
+    raise ValueError(f"{name} 必须是 true 或 false")
+
+
+class Settings:
+    """只保留 Engine、Runtime 与 CLI 实际使用的配置。"""
+
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "")
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+    LLM_AUTH_TYPE: str = os.getenv("LLM_AUTH_TYPE", "bearer")
+    LLM_TIMEOUT_SEC: int = int(os.getenv("LLM_TIMEOUT_SEC", "120"))
+    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+
+    CODING_LLM_BASE_URL: str = os.getenv("CODING_LLM_BASE_URL", LLM_BASE_URL)
+    CODING_LLM_MODEL: str = os.getenv("CODING_LLM_MODEL", LLM_MODEL)
+    CODING_LLM_API_KEY: str = os.getenv("CODING_LLM_API_KEY", LLM_API_KEY)
+    CODING_LLM_AUTH_TYPE: str = os.getenv("CODING_LLM_AUTH_TYPE", LLM_AUTH_TYPE)
+    CODING_LLM_TIMEOUT_SEC: int = int(os.getenv("CODING_LLM_TIMEOUT_SEC", str(LLM_TIMEOUT_SEC)))
+    CODING_LLM_MAX_TOKENS: int = int(os.getenv("CODING_LLM_MAX_TOKENS", str(LLM_MAX_TOKENS)))
+    _CODING_CONTEXT_LENGTH_RAW: str = os.getenv("CODING_CONTEXT_LENGTH", "").strip()
+    CODING_CONTEXT_LENGTH: int | None = (
+        int(_CODING_CONTEXT_LENGTH_RAW) if _CODING_CONTEXT_LENGTH_RAW else None
+    )
+
+    CODING_MAX_TURNS: int = int(os.getenv("CODING_MAX_TURNS", "30"))
+    CODING_VERIFY_ON_STOP: bool | None = _optional_bool("CODING_VERIFY_ON_STOP")
+    CONTEXT_SUMMARY_ENABLED: bool = os.getenv("CONTEXT_SUMMARY_ENABLED", "false").lower() == "true"
+
+    MEMORY_ENABLED: bool = os.getenv("MEMORY_ENABLED", "true").lower() == "true"
+    MEMORY_CHAR_LIMIT: int = int(os.getenv("MEMORY_CHAR_LIMIT", "2200"))
+    USER_CHAR_LIMIT: int = int(os.getenv("USER_CHAR_LIMIT", "1375"))
+
+
+settings = Settings()

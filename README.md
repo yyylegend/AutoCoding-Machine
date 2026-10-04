@@ -1,62 +1,114 @@
 # AutoCoding Machine
 
-一个面向代码库任务的轻量 Agent：模型通过工具读取、搜索、编辑并验证代码，CLI 负责交互，Runtime 负责组装循环、权限、上下文、记忆与工具。
+一个在终端里使用的 AI 助手。你用自然语言描述需求，它可以读代码、修改文件、运行测试，也可以切换成只读审查或陪伴聊天。
 
-这个仓库刻意只保留一条主线：**Coding Agent + CLI**。它不依赖前端、浏览器自动化、数据库、Redis 或任务队列。
+例如，你可以直接输入：
 
-## 核心能力
+> 帮我看一下这个项目，先解释代码怎么运行，暂时不要修改。
 
-- Tool-calling 循环：模型决定读取、搜索、编辑或执行测试。
-- 工作区沙箱：文件操作不能越过指定项目目录。
-- 权限分级：只读操作自动执行，写入与命令执行需要确认。
-- 上下文管理：按 Token 预算压缩长对话。
-- 会话与记忆：JSONL 会话记录，加上项目和用户级 Markdown 记忆。
-- Plan Mode：规划阶段阻止写工具，避免边想边改。
-- 扩展注册：Profile 通过 Runtime Registry 注册工具、检查与注入。
+## 它能做什么？
 
-## 快速开始
+内置三种模式。项目里把一套模式配置叫作 **Profile**，可以理解成“角色设定 + 能用的工具”。
+
+| 模式 | 适合做什么 |
+| --- | --- |
+| `coding`（默认） | 写功能、修 Bug。修改文件和执行命令时会请求确认；可选开启修改后的完成验证门 |
+| `review` | 只看代码、找问题、给建议，不修改文件、不执行命令 |
+| `companion` | 陪伴聊天，可以记录你提供的偏好，不使用代码和命令工具 |
+
+Coding 的“完成证据门”是交付前的修改验证检查：发现已跟踪的代码净修改，却没有修改后的成功验证时，会提醒助手补做；仍未验证则明确标注。默认关闭，可在 Profile YAML 中设置 `verify_on_stop: true` 启用，也可通过环境变量 `CODING_VERIFY_ON_STOP` 覆盖。它不保证测试覆盖了改动，也不代表需求全部完成；无净变化或只有文档修改时可直接交付。具体范围见[配置指南](docs/profiles.md#自定义-profile)和[架构说明](docs/architecture.md#完成证据门)。
+
+聊天记录会保存，之后可以接着聊。不同 Profile 分开保存会话和记忆，默认 Coding 的用户偏好仍沿用原来的全局记忆文件。
+
+每个 Profile 的会话和输入历史都放在 `.autocoding/profiles/<profile-name>/` 下；详细运行记录默认关闭，评测时在 YAML 中设置 `trace_enabled: true` 才会开启。
+
+## 怎么启动？
+
+需要先安装 **Python 3.11 或更新版本**和 **uv**。以下命令在项目目录中运行。
+
+**1. 安装项目依赖。**
 
 ```powershell
 uv sync
-Copy-Item .env.example .env
-uv run python -m src.profiles.coding.cli
 ```
 
-在 `.env` 中填写 OpenAI-compatible 模型的 `LLM_BASE_URL`、`LLM_MODEL` 和 `LLM_API_KEY`。
+**2. 配置模型。** 首次使用时复制配置模板；如果已经有 `.env`，跳过复制。
 
-项目使用 `pyproject.toml` 声明依赖，使用 `uv.lock` 锁定可复现的依赖版本；新增或删除依赖时使用 `uv add` 或 `uv remove`。
+```powershell
+Copy-Item .env.example .env
+```
 
-## 测试
+打开 `.env`，填写这三项：
+
+- `LLM_BASE_URL`：模型服务的 API 地址。
+- `LLM_MODEL`：要使用的模型名称。
+- `LLM_API_KEY`：访问模型服务的密钥。
+
+需要使用兼容 OpenAI 接口的模型服务。密钥留在本地，不要提交到仓库。
+
+**3. 启动助手。**
+
+```powershell
+uv run python -m auto_coding_machine
+```
+
+启动时所在的目录就是它处理文件的工作区。进入界面后直接打字即可：**Enter 发送，Alt+Enter 换行**。
+
+宽终端会显示渐变色 Logo，窄终端会自动换成紧凑面板；工具调用显示参数卡片，助手回复使用 Markdown 面板。输入区底部显示当前 Profile、模型和输入预算的估算占比。
+
+`/status` 可查看模型窗口及来源：手动配置、服务端报告或未知。token 在请求前只能估算（含工具定义）；上次请求的输入量以服务端 `usage` 为准。`/cost` 显示本次任务已报告的用量，报告缺失时会明确提示，详见[计数与窗口说明](docs/profiles.md#token-用量与模型窗口)。
+
+## 常用命令
+
+这些命令是在助手界面里输入的：
+
+| 命令 | 作用 |
+| --- | --- |
+| `/profile` | 查看有哪些配置 |
+| `/profile review` | 切换成只读审查；换成 `coding` 或 `companion` 就能切换其他模式 |
+| `/sessions` | 查看当前模式下的聊天记录 |
+| `/resume <会话ID>` | 继续某一次聊天，ID 可以从记录列表中找到 |
+| `/memory` | 查看保存的长期记忆 |
+| `/help` | 查看全部命令 |
+| `/quit` | 退出 |
+
+输入 `/` 会弹出命令提示，Tab 可以补全。**切换 Profile 会开始新对话，旧对话仍然保留。** 任务执行中想停下来，先按 Ctrl+C。
+
+## 想改成自己的角色？
+
+内置预设只有 `coding`、`review`、`companion`。教学示例放在 [examples/profiles](examples/profiles/)，不会自动出现在切换列表里。
+
+想创建自己的角色，先复制示例，再修改 `name` 和 `prompt`：
+
+```powershell
+Copy-Item examples/profiles/companion.yaml profile_configs/my-companion.yaml
+```
+
+在助手界面中加载：
+
+```text
+/profile profile_configs/my-companion.yaml
+```
+
+`profile_configs/` 中的 YAML 会出现在列表里，自定义配置用文件路径切换。没有启用或发现 Skills 时，模型不会收到技能搜索和加载工具。更多字段和记忆位置见[配置指南](docs/profiles.md)。
+
+## 想了解代码？
+
+- [在代码里使用 Harness](docs/harness-quickstart.md)：从一个最小例子开始，了解会话、任务和结果。
+- [Harness Cookbook](docs/harness-cookbook.md)：按实际任务学习模型、工具、权限、会话和可选记忆的接法。
+- [Microsoft Agent Framework 对照阅读](docs/microsoft-agent-framework.md)：用一个任务看懂 Agent、Harness、Session 与 Workflow，并对照本项目。
+- [当前架构](docs/architecture.md)：现在有哪些模块，分别负责什么。
+- [交互式架构图](docs/diagrams/README.md)：下载后用浏览器打开，查看整体结构和完成验证流程。
+- [后续需求与计划](docs/plans/README.md)：当前主线聚焦可组合 Harness 与适配器；暂缓功能和历史方案见索引。
+
+已完成或暂缓的设计记录归档在 [docs/archive](docs/archive/)，需要了解历史取舍时再看。
+
+修改代码后，可以运行检查：
 
 ```powershell
 uv run pytest
 ```
 
-## 架构
+测试包含模拟模型的流程验证，不代表真实模型的任务成功率。Qwen GGUF 专项优化还在后续计划中。
 
-```text
-CLI
- └─ Runtime Factory
-     ├─ Coding Profile
-     ├─ Machine Loop
-     ├─ Context / Session / Memory
-     ├─ Permission / Guard / Hooks
-     └─ Coding Tools
-          ├─ read / list / glob / grep
-          ├─ write / edit
-          ├─ run_test / run_bash
-          └─ skills / memory / history
-```
-
-模块职责与调用流程见 [`docs/architecture.md`](docs/architecture.md)。
-
-## 安全约定
-
-- `.env`、`.git` 与 `.autocoding` 默认禁止被写工具修改。
-- 未注册工具默认拒绝。
-- Shell 工具使用白名单、固定工作目录与超时限制。
-- 密钥只放在本地 `.env`，不要提交。
-
-## License
-
-见 [LICENSE](LICENSE)。
+开源协议：[MIT](LICENSE)。
