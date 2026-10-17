@@ -89,7 +89,7 @@ if __name__ == "__main__":
 | 记忆如何进入上下文 | Context Provider 在运行前后参与处理 | `RequestView` 组装本轮视图；可选 `MemoryProvider.recall`，写回使用单独的 `MemoryWriter` |
 | 工具需要人批准时 | 结果给出待处理请求，再把决定交回 Agent | 返回安全的 `permission_request`，调用 `run.resolve_permission(approved=...)` |
 
-本项目的 `MemoryProvider` 是刻意缩小的外部召回接口，不等于微软的通用 Context Provider。腾讯 MemoryCore Adapter 和显式写回已有本地实现；插件安装、任意 Python 插件加载与独立 Workflow 仍不属于当前能力。[记忆契约](../../../src/auto_coding_machine/memory/external.py)、[模块化 Harness 路线图](plans/2026-09-22-modular-harness.md)。
+本项目的 `MemoryProvider` 是刻意缩小的外部召回接口，不等于微软的通用 Context Provider。腾讯 MemoryCore Adapter 和显式写回已有本地实现；插件安装、任意 Python 插件加载与独立 Workflow 仍不属于当前能力。记忆契约见 `src/auto_coding_machine/memory/external.py`（标签 `v1-final`）、[模块化 Harness 路线图](plans/2026-09-22-modular-harness.md)。
 
 ## 读完后可以自问
 

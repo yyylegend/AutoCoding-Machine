@@ -4,7 +4,7 @@
 
 ## 背景
 
-外部程序需要知道运行何时暂停、权限决定是什么以及工具最终结果如何，同时不能通过事件替用户批准操作。当前内部 `permission_required` 事件包含原始工具参数，不能原样作为公共事件暴露；见 [MachineLoop](../../src/auto_coding_machine/engine/machine_loop.py)。
+外部程序需要知道运行何时暂停、权限决定是什么以及工具最终结果如何，同时不能通过事件替用户批准操作。当前内部 `permission_required` 事件包含原始工具参数，不能原样作为公共事件暴露；见 v1 的 `src/auto_coding_machine/engine/machine_loop.py`（标签 `v1-final`）。
 
 ## 决定
 

@@ -20,6 +20,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "import-linter>=2.15",
     "pytest>=9.1.1",
 ]
 
@@ -27,9 +28,144 @@ dev = [
 where = ["src"]
 include = ["auto_coding_machine*"]
 
-[tool.setuptools.package-data]
-"auto_coding_machine.profiles.coding.tui" = ["*.tcss"]
-
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
+
+# 依赖方向检查，对应 docs/architecture.md 第 2 节的依赖图。
+# 每个模块一条规则，列出它不能直接导入的模块；contracts 所有模块都能导入，所以不出现在任何禁止清单里。
+# allow_indirect_imports：只检查直接导入，经过允许的箭头间接到达不算违反（例如 tui -> core -> tools）。
+[tool.importlinter]
+root_package = "auto_coding_machine"
+
+[[tool.importlinter.contracts]]
+name = "contracts 不导入任何模块"
+type = "forbidden"
+source_modules = ["auto_coding_machine.contracts"]
+forbidden_modules = [
+    "auto_coding_machine.model",
+    "auto_coding_machine.tools",
+    "auto_coding_machine.policy",
+    "auto_coding_machine.session",
+    "auto_coding_machine.memory",
+    "auto_coding_machine.mcp",
+    "auto_coding_machine.environment",
+    "auto_coding_machine.core",
+    "auto_coding_machine.coding",
+    "auto_coding_machine.tui",
+    "auto_coding_machine.acp",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "model、tools、policy、memory、environment 只导入 contracts"
+type = "forbidden"
+source_modules = [
+    "auto_coding_machine.model",
+    "auto_coding_machine.tools",
+    "auto_coding_machine.policy",
+    "auto_coding_machine.memory",
+    "auto_coding_machine.environment",
+]
+forbidden_modules = [
+    "auto_coding_machine.model",
+    "auto_coding_machine.tools",
+    "auto_coding_machine.policy",
+    "auto_coding_machine.session",
+    "auto_coding_machine.memory",
+    "auto_coding_machine.mcp",
+    "auto_coding_machine.environment",
+    "auto_coding_machine.core",
+    "auto_coding_machine.coding",
+    "auto_coding_machine.tui",
+    "auto_coding_machine.acp",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "session 只导入 model"
+type = "forbidden"
+source_modules = ["auto_coding_machine.session"]
+forbidden_modules = [
+    "auto_coding_machine.tools",
+    "auto_coding_machine.policy",
+    "auto_coding_machine.memory",
+    "auto_coding_machine.mcp",
+    "auto_coding_machine.environment",
+    "auto_coding_machine.core",
+    "auto_coding_machine.coding",
+    "auto_coding_machine.tui",
+    "auto_coding_machine.acp",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "mcp 只导入 tools"
+type = "forbidden"
+source_modules = ["auto_coding_machine.mcp"]
+forbidden_modules = [
+    "auto_coding_machine.model",
+    "auto_coding_machine.policy",
+    "auto_coding_machine.session",
+    "auto_coding_machine.memory",
+    "auto_coding_machine.environment",
+    "auto_coding_machine.core",
+    "auto_coding_machine.coding",
+    "auto_coding_machine.tui",
+    "auto_coding_machine.acp",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "core 不导入 environment 和应用"
+type = "forbidden"
+source_modules = ["auto_coding_machine.core"]
+forbidden_modules = [
+    "auto_coding_machine.environment",
+    "auto_coding_machine.coding",
+    "auto_coding_machine.tui",
+    "auto_coding_machine.acp",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "coding 只导入 core 和 environment"
+type = "forbidden"
+source_modules = ["auto_coding_machine.coding"]
+forbidden_modules = [
+    "auto_coding_machine.model",
+    "auto_coding_machine.tools",
+    "auto_coding_machine.policy",
+    "auto_coding_machine.session",
+    "auto_coding_machine.memory",
+    "auto_coding_machine.mcp",
+    "auto_coding_machine.tui",
+    "auto_coding_machine.acp",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "tui 和 acp 只导入 core 和 coding"
+type = "forbidden"
+source_modules = [
+    "auto_coding_machine.tui",
+    "auto_coding_machine.acp",
+]
+forbidden_modules = [
+    "auto_coding_machine.model",
+    "auto_coding_machine.tools",
+    "auto_coding_machine.policy",
+    "auto_coding_machine.session",
+    "auto_coding_machine.memory",
+    "auto_coding_machine.mcp",
+    "auto_coding_machine.environment",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "tui 和 acp 彼此独立"
+type = "independence"
+modules = [
+    "auto_coding_machine.tui",
+    "auto_coding_machine.acp",
+]

@@ -8,7 +8,7 @@
 
 内置的 `coding`、`review`、`companion` 可以直接按名称切换。教学示例放在 `examples/profiles/`，不会自动出现在 `/profile` 清单。
 
-从带注释的示例开始：[只读审查](../../../examples/profiles/reviewer.yaml)、[陪伴角色](../../../examples/profiles/companion.yaml)。把要使用的示例复制到 `profile_configs/`，再修改名称和提示词：
+从带注释的示例开始：只读审查 `examples/profiles/reviewer.yaml`、陪伴角色 `examples/profiles/companion.yaml`（标签 `v1-final`）。把要使用的示例复制到 `profile_configs/`，再修改名称和提示词：
 
 ```powershell
 Copy-Item examples/profiles/reviewer.yaml profile_configs/my-review.yaml

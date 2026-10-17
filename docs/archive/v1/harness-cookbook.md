@@ -18,7 +18,7 @@ Profile + 模型 + 工具 → open_harness_session() → begin_run() → start()
 uv run python -m examples.harness_review . "检查这个项目的错误处理"
 ```
 
-示例使用 `review` Profile，只注册读取工具；它不会自动批准权限，也不会修改项目。完整调用代码在 [`examples/harness_review.py`](../../../examples/harness_review.py)。
+示例使用 `review` Profile，只注册读取工具；它不会自动批准权限，也不会修改项目。完整调用代码在 `examples/harness_review.py`（标签 `v1-final`）。
 
 ## 2. 接入自己的模型
 
@@ -44,7 +44,7 @@ return AgentResponse(tool_calls=[
 ])
 ```
 
-`done=True` 表示模型确认任务已完成；只有文字不代表任务已经完成。使用自己的模型 SDK 时，由调用方把工具定义传给 SDK，并把返回的工具调用转换成 `ToolCall`。如果使用 OpenAI-compatible 服务，可参考 [`ModelAdapter` 的实际接线](../../../examples/harness_review.py)。
+`done=True` 表示模型确认任务已完成；只有文字不代表任务已经完成。使用自己的模型 SDK 时，由调用方把工具定义传给 SDK，并把返回的工具调用转换成 `ToolCall`。如果使用 OpenAI-compatible 服务，可参考 `examples/harness_review.py` 中 `ModelAdapter` 的实际接线（标签 `v1-final`）。
 
 ## 3. 加一个自己的工具
 
