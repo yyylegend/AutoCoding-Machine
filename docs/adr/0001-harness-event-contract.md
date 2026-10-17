@@ -1,6 +1,6 @@
 # ADR 0001：Harness 公共事件与权限交接约定
 
-状态：已实现（2026-09-24）；具体验收记录见[实施计划](../plans/2026-09-24-harness-public-events.md)。
+状态：已实现（2026-09-24）；具体验收记录见[归档计划](../archive/2026-09-24-harness-public-events.md)。
 
 ## 背景
 

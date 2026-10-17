@@ -1,8 +1,8 @@
 # Harness Core v0.1 收尾计划
 
-日期：2026-10-04；状态：已完成（实施结果见文末）。本文只记录本轮收尾事项，不重写 Phase 0–6 历史；阶段与长期方向见[模块化 Harness 与插件适配计划](2026-09-22-modular-harness.md)。
+日期：2026-10-04；状态：已完成（实施结果见文末）。本文只记录本轮收尾事项，不重写 Phase 0–6 历史；阶段与长期方向见[模块化 Harness 与插件适配计划](../plans/2026-09-22-modular-harness.md)。
 
-[规划入口](README.md) · [当前架构](../architecture.md) · [ADR 0001](../adr/0001-harness-event-contract.md)
+[规划入口](../plans/README.md) · [当前架构](../architecture.md) · [ADR 0001](../adr/0001-harness-event-contract.md)
 
 ## 定位
 

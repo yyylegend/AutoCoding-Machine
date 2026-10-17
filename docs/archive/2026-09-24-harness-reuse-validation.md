@@ -1,6 +1,6 @@
 # Harness 第二调用者验证
 
-状态：已完成（2026-09-24）。这是近期执行计划；阶段与长期方向见[模块化 Harness 路线图](2026-09-22-modular-harness.md)，当前行为以[架构说明](../architecture.md)为准。
+状态：已完成（2026-09-24）。本文保留第二调用者的验收记录；阶段与长期方向见[模块化 Harness 路线图](../plans/2026-09-22-modular-harness.md)，当前行为以[架构说明](../architecture.md)为准。
 
 ## 目标
 
