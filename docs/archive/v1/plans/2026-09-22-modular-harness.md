@@ -2,7 +2,7 @@
 
 状态：方向已确认；Phase 0–4 已有本地实现，Phase 5 已完成现有替换点的评估与验证。Phase 3 已通过本机 Gateway 的合成 L1 召回和身份隔离测试；Phase 4 提供显式 `MemoryWriter`，只在任务成功后写入用户输入与最终回复，超时不自动重试，数据保留由 Gateway 管理。腾讯云远程部署尚未验证，后续插件仍待评估。
 
-[规划入口](README.md) · [当前架构](../architecture.md) · [运行时边界历史记录](../archive/2026-09-05-runtime-boundaries.md)
+[规划入口](README.md) · [当前架构](../architecture.md) · [运行时边界历史记录](../../2026-09-05-runtime-boundaries.md)
 
 ## 想做成什么
 
@@ -63,13 +63,13 @@ Profile：选择已有能力和策略，不承载插件代码
 | 模型 | 公共入口注入 `model_fn`；固定模型与真实模型均通过一轮任务 | 保持 `AgentResponse` 契约；无需另建 ModelProvider |
 | 工具 | `tools=` 和显式注册可组合自定义工具；权限暂停与真实模型工具调用均已验证 | 无需通用 Capability Provider 或 YAML 动态导入 |
 | 会话 | 默认 JSONL 与无文件路径的存储均经公共入口验证；自动召回与存储来源一致 | 其他存储的跨会话检索与跨存储切换尚未接入 |
-| 事件 | `HookManager.on_event` 供状态栏和运行记录使用；测试覆盖多观察者与回调失败隔离 | 公共会话观察入口和安全权限交接已按[验收记录](../archive/2026-09-24-harness-public-events.md)实现 |
+| 事件 | `HookManager.on_event` 供状态栏和运行记录使用；测试覆盖多观察者与回调失败隔离 | 公共会话观察入口和安全权限交接已按[验收记录](../../2026-09-24-harness-public-events.md)实现 |
 
 无界面组合测试已覆盖工具、权限、外部记忆、JSONL 和显式写回；临时工作区的真实模型测试也跑通了工具调用与回填。上述保留项仍是限制，不视为已实现。Phase 5 到此完成；Phase 6 仍以出现第二个真实外部插件为前提。
 
 ## Phase 5 之后
 
-已完成的[Harness 第二调用者验证](../archive/2026-09-24-harness-reuse-validation.md)记录了无界面 Review 示例与 CLI 共用 `open_harness_session()`，以及外部调用方通过本地 editable 安装和 `auto_coding_machine` 导入完成 DroidForge 真实 Review。随后按[公共事件与权限交接验收记录](../archive/2026-09-24-harness-public-events.md)开放了同步观察入口，并让权限暂停使用安全请求视图；腾讯 L1 保持显式启用的实验能力。
+已完成的[Harness 第二调用者验证](../../2026-09-24-harness-reuse-validation.md)记录了无界面 Review 示例与 CLI 共用 `open_harness_session()`，以及外部调用方通过本地 editable 安装和 `auto_coding_machine` 导入完成 DroidForge 真实 Review。随后按[公共事件与权限交接验收记录](../../2026-09-24-harness-public-events.md)开放了同步观察入口，并让权限暂停使用安全请求视图；腾讯 L1 保持显式启用的实验能力。
 
 Phase 6 只有在出现第二个真实外部 Adapter、确需安装与注册机制时才启动。
 

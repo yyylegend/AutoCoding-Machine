@@ -1,6 +1,6 @@
 # 产品总览：AutoCoding Machine
 
-[返回首页](../README.md) · [当前架构](architecture.md) · [组合示例](harness-cookbook.md) · [执行路线](plans/README.md)
+[返回首页](../../../README.md) · [当前架构](architecture.md) · [组合示例](harness-cookbook.md) · [执行路线](plans/README.md)
 
 ## 产品定位
 

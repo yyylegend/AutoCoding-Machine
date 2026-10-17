@@ -1,8 +1,8 @@
 # 运行时边界演进计划
 
-状态：归档的历史计划（部分实施）。`RuntimeComponents`、`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的第一切片已落地；其余目标是当时的设计设想，并非全部完成。当前范围见[模块化 Harness 主线](../plans/2026-09-22-modular-harness.md)；下文保留原阶段记录。
+状态：归档的历史计划（部分实施）。`RuntimeComponents`、`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的第一切片已落地；其余目标是当时的设计设想，并非全部完成。当前范围见[模块化 Harness 主线](v1/plans/2026-09-22-modular-harness.md)；下文保留原阶段记录。
 
-当前实现以 [架构说明](../architecture.md) 为准，使用方法以 [README](../../README.md) 为准。
+当前实现以 [v1 架构说明](v1/architecture.md) 为准，使用方法以 [README](../../README.md) 为准。
 
 Profile 配置要求保留在[已承接的通用 Profile 设计](2026-09-06-universal-profiles.md)中。本计划描述职责边界，不要求一次性重写全部模块；长任务规划已暂缓归档。
 

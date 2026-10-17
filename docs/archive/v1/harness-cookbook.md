@@ -18,7 +18,7 @@ Profile + 模型 + 工具 → open_harness_session() → begin_run() → start()
 uv run python -m examples.harness_review . "检查这个项目的错误处理"
 ```
 
-示例使用 `review` Profile，只注册读取工具；它不会自动批准权限，也不会修改项目。完整调用代码在 [`examples/harness_review.py`](../examples/harness_review.py)。
+示例使用 `review` Profile，只注册读取工具；它不会自动批准权限，也不会修改项目。完整调用代码在 [`examples/harness_review.py`](../../../examples/harness_review.py)。
 
 ## 2. 接入自己的模型
 
@@ -44,7 +44,7 @@ return AgentResponse(tool_calls=[
 ])
 ```
 
-`done=True` 表示模型确认任务已完成；只有文字不代表任务已经完成。使用自己的模型 SDK 时，由调用方把工具定义传给 SDK，并把返回的工具调用转换成 `ToolCall`。如果使用 OpenAI-compatible 服务，可参考 [`ModelAdapter` 的实际接线](../examples/harness_review.py)。
+`done=True` 表示模型确认任务已完成；只有文字不代表任务已经完成。使用自己的模型 SDK 时，由调用方把工具定义传给 SDK，并把返回的工具调用转换成 `ToolCall`。如果使用 OpenAI-compatible 服务，可参考 [`ModelAdapter` 的实际接线](../../../examples/harness_review.py)。
 
 ## 3. 加一个自己的工具
 
@@ -229,7 +229,7 @@ session = open_harness_session(
 
 模型连接错误、HTTP 错误及自定义组件中未被处理的异常直接向调用方抛出。调用方应在 `run.start()` 和 `run.resolve_permission()` 的调用边界处理这些异常；此时不保证已经设置 `run.result` 或发出终止事件。上下文超限使用循环明确支持的压缩与一次重试路径。公共事件观察回调和可选记忆服务的失败处理见各自约定。
 
-事件顺序遵守以下约定（详见 [ADR 0001](adr/0001-harness-event-contract.md)）：
+事件顺序遵守以下约定（详见 [ADR 0001](../../adr/0001-harness-event-contract.md)）：
 
 1. 工具执行前发 `pre_tool`；每个工具调用都有配对的 `post_tool`——被拒绝或因取消未执行的调用也有 `post_tool` 和明确回执。
 2. 需要审批时先发 `permission_required`（带 `request`），宿主显式调用 `resolve_permission(approved=...)` 后才发 `permission_resolved`（`decision` 为 `approved` 或 `denied`），然后才是该工具的 `post_tool`。批准只代表获准尝试，工具可能执行失败。

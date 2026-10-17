@@ -1,6 +1,6 @@
 # Textual CLI 使用指南
 
-[返回首页](../README.md) · [Profile 配置](profiles.md) · [Harness 架构](architecture.md)
+[返回首页](../../../README.md) · [Profile 配置](profiles.md) · [Harness 架构](architecture.md)
 
 ## 启动
 

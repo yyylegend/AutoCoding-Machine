@@ -2,7 +2,9 @@
 
 轻量、模块化、可组合的 Python Agent Framework。开发者可以接入自己的模型、工具和业务规则，复用执行循环、权限、会话、上下文与运行事件。
 
-Coding CLI 是框架的实际应用：你用自然语言描述需求，它可以读代码、修改文件、运行测试，也可以切换成只读审查或陪伴聊天。产品定位、最终形态和能力进度见[产品总览](docs/product-overview.md)；在自己的程序中使用框架，从[快速入门](docs/harness-quickstart.md)开始。
+> `v2` 分支正在按 [v2 架构](docs/architecture.md) 重写。本页的安装、启动和命令说明对应仓库中现有的 v1 代码，v1 最终版本见 Git 标签 `v1-final`，v1 全部文档归档在 [docs/archive/v1](docs/archive/v1/)。
+
+Coding CLI 是框架的实际应用：你用自然语言描述需求，它可以读代码、修改文件、运行测试，也可以切换成只读审查或陪伴聊天。v1 的产品定位与能力进度见[产品总览](docs/archive/v1/product-overview.md)；在自己的程序中使用 v1 框架，从[快速入门](docs/archive/v1/harness-quickstart.md)开始。
 
 例如，你可以直接输入：
 
@@ -18,7 +20,7 @@ Coding CLI 是框架的实际应用：你用自然语言描述需求，它可以
 | `review` | 只看代码、找问题、给建议，不修改文件、不执行命令 |
 | `companion` | 陪伴聊天，可以记录你提供的偏好，不使用代码和命令工具 |
 
-Coding 的“完成证据门”是实验性的修改验证检查：发现已跟踪的代码净修改，却没有修改后的成功验证时，会提醒助手补做；仍未验证则明确标注。Textual CLI 默认关闭，通过界面开关、`/verify on|off` 或 `--verify-on-stop` 设置；Python 调用方使用 Profile 和环境变量约定。它不保证测试覆盖了改动，也不代表需求全部完成；无净变化或只有文档修改时可直接交付。具体范围见[配置指南](docs/profiles.md#自定义-profile)和[架构说明](docs/architecture.md#完成证据门)。
+Coding 的“完成证据门”是实验性的修改验证检查：发现已跟踪的代码净修改，却没有修改后的成功验证时，会提醒助手补做；仍未验证则明确标注。Textual CLI 默认关闭，通过界面开关、`/verify on|off` 或 `--verify-on-stop` 设置；Python 调用方使用 Profile 和环境变量约定。它不保证测试覆盖了改动，也不代表需求全部完成；无净变化或只有文档修改时可直接交付。具体范围见[配置指南](docs/archive/v1/profiles.md#自定义-profile)和[v1 架构说明](docs/archive/v1/architecture.md#完成证据门)。
 
 聊天记录会保存，之后可以接着聊。不同 Profile 分开保存会话和记忆，默认 Coding 的用户偏好仍沿用原来的全局记忆文件。
 
@@ -56,9 +58,9 @@ uv run python -m auto_coding_machine
 
 启动时所在的目录就是它处理文件的工作区。进入界面后直接打字即可：**Enter 发送，Alt+Enter 换行**。
 
-Textual 界面提供滚动对话区、固定多行输入区、会话侧栏和权限弹窗。宽终端保留 AUTOCODING MACHINE 渐变 Logo，窄终端使用紧凑标题；工具详情可以展开。Ctrl+B 显示或隐藏会话侧栏，Ctrl+Q 退出。完整操作见 [CLI 使用指南](docs/cli.md)。
+Textual 界面提供滚动对话区、固定多行输入区、会话侧栏和权限弹窗。宽终端保留 AUTOCODING MACHINE 渐变 Logo，窄终端使用紧凑标题；工具详情可以展开。Ctrl+B 显示或隐藏会话侧栏，Ctrl+Q 退出。完整操作见 [CLI 使用指南](docs/archive/v1/cli.md)。
 
-`/status` 可查看模型窗口及来源：手动配置、服务端报告或未知。token 在请求前只能估算（含工具定义）；上次请求的输入量以服务端 `usage` 为准。`/cost` 显示本次任务已报告的用量，报告缺失时会明确提示，详见[计数与窗口说明](docs/profiles.md#token-用量与模型窗口)。
+`/status` 可查看模型窗口及来源：手动配置、服务端报告或未知。token 在请求前只能估算（含工具定义）；上次请求的输入量以服务端 `usage` 为准。`/cost` 显示本次任务已报告的用量，报告缺失时会明确提示，详见[计数与窗口说明](docs/archive/v1/profiles.md#token-用量与模型窗口)。
 
 ## 常用命令
 
@@ -93,19 +95,15 @@ Copy-Item examples/profiles/companion.yaml profile_configs/my-companion.yaml
 /profile profile_configs/my-companion.yaml
 ```
 
-`profile_configs/` 中的 YAML 会出现在列表里，自定义配置用文件路径切换。没有启用或发现 Skills 时，模型不会收到技能搜索和加载工具。更多字段和记忆位置见[配置指南](docs/profiles.md)。
+`profile_configs/` 中的 YAML 会出现在列表里，自定义配置用文件路径切换。没有启用或发现 Skills 时，模型不会收到技能搜索和加载工具。更多字段和记忆位置见[配置指南](docs/archive/v1/profiles.md)。
 
 ## 想了解代码？
 
-- [产品总览](docs/product-overview.md)：目标用户、最终形态、能力模块、工作流和产品边界。
-- [在代码里使用 Harness](docs/harness-quickstart.md)：从一个最小例子开始，了解会话、任务和结果。
-- [Harness Cookbook](docs/harness-cookbook.md)：按实际任务学习模型、工具、权限、会话和可选记忆的接法。
-- [Microsoft Agent Framework 对照阅读](docs/microsoft-agent-framework.md)：用一个任务看懂 Agent、Harness、Session 与 Workflow，并对照本项目。
-- [当前架构](docs/architecture.md)：现在有哪些模块，分别负责什么。
-- [交互式架构图](docs/diagrams/README.md)：下载后用浏览器打开，查看整体结构和完成验证流程。
-- [后续需求与计划](docs/plans/README.md)：当前主线聚焦可组合 Harness 与适配器；暂缓功能和历史方案见索引。
+- [v2 架构](docs/architecture.md)：v2 的模块划分、依赖方向、核心概念和行为契约。
+- [术语表](CONTEXT.md)与 [ADR](docs/adr/)：v1 与 v2 共用的术语和已确定的设计决定。
+- [v1 文档归档](docs/archive/v1/)：v1 的产品总览、快速入门、Cookbook、CLI 指南、配置指南、架构说明、交互式架构图和计划。
 
-已完成或暂缓的设计记录归档在 [docs/archive](docs/archive/)，需要了解历史取舍时再看。
+已完成或暂缓的历史设计记录在 [docs/archive](docs/archive/)，需要了解历史取舍时再看。
 
 修改代码后，可以运行检查：
 

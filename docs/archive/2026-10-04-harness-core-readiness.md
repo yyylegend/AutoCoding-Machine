@@ -1,12 +1,12 @@
 # Harness Core v0.1 收尾计划
 
-日期：2026-10-04；状态：已完成（实施结果见文末）。本文只记录本轮收尾事项，不重写 Phase 0–6 历史；阶段与长期方向见[模块化 Harness 与插件适配计划](../plans/2026-09-22-modular-harness.md)。
+日期：2026-10-04；状态：已完成（实施结果见文末）。本文只记录本轮收尾事项，不重写 Phase 0–6 历史；阶段与长期方向见[模块化 Harness 与插件适配计划](v1/plans/2026-09-22-modular-harness.md)。
 
-[规划入口](../plans/README.md) · [当前架构](../architecture.md) · [ADR 0001](../adr/0001-harness-event-contract.md)
+[v1 规划入口](v1/plans/README.md) · [v1 架构](v1/architecture.md) · [ADR 0001](../adr/0001-harness-event-contract.md)
 
 ## 定位
 
-轻量、可组合的 Agent Framework：公共接口保持最小集合（`open_harness_session`、`AgentSession`、`AgentRun`、`AgentEvent` 与契约类型），能力默认关闭、按需注入。Coding CLI 是其中一个应用，不是框架的一部分。扩展以真实调用需求驱动；不为目录对称新增 Provider / Manager / Builder，不扩大默认依赖。微软框架的职责划分只作对照参考，见[对照阅读](../microsoft-agent-framework.md)。
+轻量、可组合的 Agent Framework：公共接口保持最小集合（`open_harness_session`、`AgentSession`、`AgentRun`、`AgentEvent` 与契约类型），能力默认关闭、按需注入。Coding CLI 是其中一个应用，不是框架的一部分。扩展以真实调用需求驱动；不为目录对称新增 Provider / Manager / Builder，不扩大默认依赖。微软框架的职责划分只作对照参考，见[对照阅读](v1/microsoft-agent-framework.md)。
 
 ## 目标
 
@@ -62,7 +62,7 @@
 
 ### 3. 公共接口约定
 
-[Cookbook 第 6 节](../harness-cookbook.md#6-运行结果与事件契约)新增结果字段表、三类错误区分、事件顺序、脱敏与取消语义；`open_harness_session` 补齐参数与错误约定 docstring。未调整字段、未增加公共类型。
+[Cookbook 第 6 节](v1/harness-cookbook.md#6-运行结果与事件契约)新增结果字段表、三类错误区分、事件顺序、脱敏与取消语义；`open_harness_session` 补齐参数与错误约定 docstring。未调整字段、未增加公共类型。
 
 ### 4. 独立安装
 

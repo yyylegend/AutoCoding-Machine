@@ -1,6 +1,6 @@
 # Microsoft Agent Framework：从一次代码审查看懂 Harness
 
-[返回首页](../README.md) · [本项目架构](architecture.md) · [Harness Cookbook](harness-cookbook.md)
+[返回首页](../../../README.md) · [本项目架构](architecture.md) · [Harness Cookbook](harness-cookbook.md)
 
 这是一篇对照阅读笔记，依据 2026-09-26 查阅的微软官方文档。读完后，你应该能说清 Agent、Harness、Session 和 Workflow 各做什么，并知道这些概念在本项目里对应到哪里。这里的微软示例属于另一套 Python 包，不是本项目已经接入的依赖。
 
@@ -45,7 +45,7 @@
 
 **Middleware 可以介入运行过程。** 微软提供 Agent、工具调用和模型调用等不同位置的中间件；它们可以检查或改变输入、结果和控制流程。单纯接收事件的观察回调只用于通知。我们项目的 `on_event` 属于后者，权限决定仍由调用方显式提交。[Middleware 文档](https://learn.microsoft.com/en-us/agent-framework/concepts/agents/middleware/)、[本项目权限示例](harness-cookbook.md#3-加一个自己的工具)。
 
-在微软的 Python 工具审批流程中，运行结果可包含待用户处理的请求；调用方取得决定后，把审批响应交回 Agent 继续运行。我们项目采用 `result["permission_request"]` 加同一个 Run 的 `resolve_permission(approved=...)`。两者都让应用负责收集人的决定，但具体 API 不同。[微软工具审批](https://learn.microsoft.com/en-us/agent-framework/agents/tools/tool-approval)、[本项目事件约定](adr/0001-harness-event-contract.md)。
+在微软的 Python 工具审批流程中，运行结果可包含待用户处理的请求；调用方取得决定后，把审批响应交回 Agent 继续运行。我们项目采用 `result["permission_request"]` 加同一个 Run 的 `resolve_permission(approved=...)`。两者都让应用负责收集人的决定，但具体 API 不同。[微软工具审批](https://learn.microsoft.com/en-us/agent-framework/agents/tools/tool-approval)、[本项目事件约定](../../adr/0001-harness-event-contract.md)。
 
 ## 看一眼微软 Python 公共入口
 
@@ -89,7 +89,7 @@ if __name__ == "__main__":
 | 记忆如何进入上下文 | Context Provider 在运行前后参与处理 | `RequestView` 组装本轮视图；可选 `MemoryProvider.recall`，写回使用单独的 `MemoryWriter` |
 | 工具需要人批准时 | 结果给出待处理请求，再把决定交回 Agent | 返回安全的 `permission_request`，调用 `run.resolve_permission(approved=...)` |
 
-本项目的 `MemoryProvider` 是刻意缩小的外部召回接口，不等于微软的通用 Context Provider。腾讯 MemoryCore Adapter 和显式写回已有本地实现；插件安装、任意 Python 插件加载与独立 Workflow 仍不属于当前能力。[记忆契约](../src/auto_coding_machine/memory/external.py)、[模块化 Harness 路线图](plans/2026-09-22-modular-harness.md)。
+本项目的 `MemoryProvider` 是刻意缩小的外部召回接口，不等于微软的通用 Context Provider。腾讯 MemoryCore Adapter 和显式写回已有本地实现；插件安装、任意 Python 插件加载与独立 Workflow 仍不属于当前能力。[记忆契约](../../../src/auto_coding_machine/memory/external.py)、[模块化 Harness 路线图](plans/2026-09-22-modular-harness.md)。
 
 ## 读完后可以自问
 

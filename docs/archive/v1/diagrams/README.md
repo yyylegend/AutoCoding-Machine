@@ -1,6 +1,6 @@
 # 交互式架构图
 
-[返回首页](../../README.md) · [当前架构说明](../architecture.md)
+[返回首页](../../../../README.md) · [当前架构说明](../architecture.md)
 
 - [整体架构](architecture-overview.html)：终端、运行时、执行循环、工具和数据存储。
 - [Harness 包结构](harness-package-structure.html)：公共入口与 `auto_coding_machine` 内的主要子包。

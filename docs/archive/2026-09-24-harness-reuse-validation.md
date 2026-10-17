@@ -1,6 +1,6 @@
 # Harness 第二调用者验证
 
-状态：已完成（2026-09-24）。本文保留第二调用者的验收记录；阶段与长期方向见[模块化 Harness 路线图](../plans/2026-09-22-modular-harness.md)，当前行为以[架构说明](../architecture.md)为准。
+状态：已完成（2026-09-24）。本文保留第二调用者的验收记录；阶段与长期方向见[模块化 Harness 路线图](v1/plans/2026-09-22-modular-harness.md)，当前行为以[v1 架构说明](v1/architecture.md)为准。
 
 ## 目标
 
@@ -8,7 +8,7 @@
 
 ## 实施结果
 
-- `examples/harness_review.py` 接收工作区和问题，通过 `auto_coding_machine` 的统一导入入口使用内置 `review` Profile、`ProfileTools`、`ModelAdapter` 和 `open_harness_session()`；意外请求权限时停止，不自动批准。命令见[Harness 快速入门](../harness-quickstart.md)。
+- `examples/harness_review.py` 接收工作区和问题，通过 `auto_coding_machine` 的统一导入入口使用内置 `review` Profile、`ProfileTools`、`ModelAdapter` 和 `open_harness_session()`；意外请求权限时停止，不自动批准。命令见[Harness 快速入门](v1/harness-quickstart.md)。
 - 核心组合和可选记忆契约分别通过 `auto_coding_machine` 与 `auto_coding_machine.memory` 导入；实现统一位于 `src/auto_coding_machine/`。
 - `auto-coding-machine` 可作为本地 editable 依赖加入另一个 uv 项目；调用方不设置 `PYTHONPATH` 也能导入包，并可从自己的工作目录或环境文件读取模型配置。
 - 固定模型测试实际调用 `read_file`，检查模型工具表不含写文件或 Shell 能力，并验证最终结果和 JSONL 消息。

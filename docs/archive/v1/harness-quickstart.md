@@ -64,7 +64,7 @@ uv run --env-file .env python .\app.py
 
 ## 再跑一个业务示例
 
-仓库里还有一个不带代码能力的业务组合示例：[订单查询与回复草稿助手](../examples/order_assistant.py)。它用本地字典做演示订单数据，注册「查询订单」和「保存回复草稿」两个自定义工具，配一段业务提示词，默认走确定性演示模型，不需要 API Key：
+仓库里还有一个不带代码能力的业务组合示例：[订单查询与回复草稿助手](../../../examples/order_assistant.py)。它用本地字典做演示订单数据，注册「查询订单」和「保存回复草稿」两个自定义工具，配一段业务提示词，默认走确定性演示模型，不需要 API Key：
 
 ```powershell
 uv run python .\examples\order_assistant.py
