@@ -34,7 +34,7 @@
 
 【谁会用】
   - MachineLoop（核心循环）：在 run() 里调 fire()
-  - CLI cli_ui.py：注册终端输出回调（取代 ConsoleEventSink）
+  - Textual CLI：通过 open_harness_session(on_event=...) 接收公共事件
   - Runtime 调用方：注册需要的生命周期回调
   - 测试：注册 mock 回调来验证事件流
 """

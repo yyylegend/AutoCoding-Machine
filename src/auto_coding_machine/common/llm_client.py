@@ -291,8 +291,7 @@ def chat_stream(messages, tools=None, tool_choice="auto", timeout=None,
         ttft_ms = 首字延迟毫秒数（第一个 content token 到达的时间）
 
     【谁会用】
-      只有 CLI 的 SimpleLLMAdapter 用（要实时显示 + 观测指标）。
-      CLI 使用此函数实现增量渲染。
+      ModelAdapter 传入 on_token 时使用；Textual CLI 用它实时显示回复并记录首字延迟。
 
     参数 on_token：
       可选回调，签名 on_token(delta_text: str)。每到一个 content 增量就调一次。

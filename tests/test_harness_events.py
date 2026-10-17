@@ -55,7 +55,7 @@ def test_permission_pause_exposes_only_redacted_request_view(tmp_path):
     result = session.begin_run("写入文件").start()
 
     assert result["status"] == "permission_required"
-    assert "pending_tool_call" not in result
+    assert "batch" not in result
     assert "messages" not in result
     request = result["permission_request"]
     assert request["tool_name"] == "write_file"

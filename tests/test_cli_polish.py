@@ -1,7 +1,7 @@
 """CLI 体验增强测试（TUI P0 三件套）。
 
 覆盖两块：
-1. SlashCompleter              - 斜杠命令菜单 + /skill、/resume 参数补全
+1. SlashCompleter              - /skill、/resume 参数补全
 2. repair_dangling_tool_results - Ctrl+C 中断后修复悬空的 tool_calls
 
 """
@@ -27,35 +27,10 @@ def _make_completer(sessions=None):
 
 
 # ============================================================
-# 1. SlashCompleter：命令菜单 + 参数补全
+# 1. SlashCompleter：参数补全
 # ============================================================
 
 class TestSlashCompleter(unittest.TestCase):
-
-    def test_slash_lists_all_commands(self):
-        """输入 / 应弹出全部命令菜单。"""
-        completer = _make_completer()
-        names = [c.text for c in completer.get_completions(Document("/"), None)]
-        self.assertIn("/help", names)
-        self.assertIn("/skills", names)
-        self.assertIn("/skill ", names)    # 带参数命令带尾随空格
-        self.assertIn("/resume ", names)
-        self.assertIn("/quit", names)
-
-    def test_partial_command_matches(self):
-        """输入 /sk 同时匹配 /skill（带空格）和 /skills。"""
-        completer = _make_completer()
-        names = [c.text for c in completer.get_completions(Document("/sk"), None)]
-        self.assertIn("/skill ", names)
-        self.assertIn("/skills", names)
-
-    def test_command_menu_has_description_meta(self):
-        """命令菜单右边应显示一句话说明。"""
-        completer = _make_completer()
-        completions = list(completer.get_completions(Document("/help"), None))
-        self.assertEqual(len(completions), 1)
-        self.assertEqual(completions[0].text, "/help")
-        self.assertTrue(completions[0].display_meta_text)
 
     def test_skill_arg_completion(self):
         """/skill t 应补出 tdd（替换最后一个字符片段）。"""

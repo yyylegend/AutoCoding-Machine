@@ -4,20 +4,15 @@
 
 观察原则（按计划要求）：只通过公共 seam 断言——
 Gate 的 CompletionDecision、MachineLoop 的 result dict、
-StreamingAdapter 的 last_streamed、SessionStore.load() 的 JSONL 内容。
+TuiModelAdapter 发给界面的流式增量、SessionStore.load() 的 JSONL 内容。
 不断言 Gate 的私有字段布局。
 """
 
-import io
-
-from rich.console import Console
-
 from auto_coding_machine.engine import AgentResponse, BudgetPolicy, CancellationToken, ToolCall
 from auto_coding_machine.engine.session_store import SessionStore, sessions_dir_for
-from auto_coding_machine.profiles.coding import llm_adapter
-from auto_coding_machine.profiles.coding.cli_ui import THEME
 from auto_coding_machine.profiles.coding.completion_gate import CompletionGate
-from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
+from auto_coding_machine.profiles.coding.tui import model as tui_model
+from auto_coding_machine.profiles.coding.tui.model import TuiModelAdapter
 from auto_coding_machine.profiles.coding.sandbox import WorkspaceSandbox
 from auto_coding_machine.profiles.coding.tools import CodingTools
 from auto_coding_machine.runtime.factory import create_coding_runtime
@@ -615,42 +610,50 @@ def _fake_stream(monkeypatch, pieces):
             on_token(piece)
         return {"content": "".join(pieces), "usage": {}}
 
-    monkeypatch.setattr(llm_adapter, "chat_stream", fake_chat_stream)
+    monkeypatch.setattr(tui_model, "chat_stream", fake_chat_stream)
+
+
+def make_stream_adapter(completion_gate=None):
+    """返回 Textual 模型 adapter 和它发给界面的消息记录。"""
+    emitted = []
+    adapter = TuiModelAdapter(
+        [], lambda kind, value: emitted.append((kind, value)),
+        session_id="gate-stream", completion_gate=completion_gate,
+    )
+    return adapter, emitted
 
 
 def test_streamed_candidate_is_buffered_while_gate_is_open(tmp_path, monkeypatch):
-    """AC-12 / FR-28：门开着时 token 照收但静默缓冲，不建持久面板，
-    last_streamed 保持 False（不误抑制最终提交）。"""
+    """AC-12 / FR-28：门开着时 token 照收但不发给界面，验证通过后恢复流式展示。"""
     pieces = ["任务完成，", "一切正常。"]
     _fake_stream(monkeypatch, pieces)
 
     gate = make_gate(tmp_path)
-    console = Console(file=io.StringIO(), width=100)
-    adapter = StreamingAdapter([], console, THEME, publish_gate=gate)
+    adapter, emitted = make_stream_adapter(gate)
 
     # 有未验证的修改 → 静默缓冲
     write_and_track(gate, tmp_path, "a.py", "x\n")
     response = adapter.call([{"role": "user", "content": "hi"}])
 
     assert response.content == "".join(pieces)  # token 确实收到了
-    assert adapter.last_streamed is False       # 但没有持久展示
+    assert emitted == [("start", False), ("end", None)]  # 但没有发给界面
 
     # 验证通过后 → 恢复正常流式展示
     validate(gate)
+    emitted.clear()
     adapter.call([{"role": "user", "content": "hi"}])
-    assert adapter.last_streamed is True
+    assert ("chunk", "任务完成，") in emitted
 
 
 def test_streamed_clean_task_publishes_normally(tmp_path, monkeypatch):
     """FR-27：干净任务（无 Gate / 无未验证修改）保持原流式体验。"""
     _fake_stream(monkeypatch, ["你好"])
 
-    console = Console(file=io.StringIO(), width=100)
-    # 没配 publish_gate → 永远展示（NFR-1）
-    adapter = StreamingAdapter([], console, THEME)
+    # 没配 completion_gate → 永远展示（NFR-1）
+    adapter, emitted = make_stream_adapter()
 
     adapter.call([{"role": "user", "content": "hi"}])
-    assert adapter.last_streamed is True
+    assert emitted == [("start", True), ("chunk", "你好"), ("end", None)]
 
 
 # ================================================================

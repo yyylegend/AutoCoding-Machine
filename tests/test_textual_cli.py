@@ -8,19 +8,11 @@ from auto_coding_machine.profiles.config import Profile
 from auto_coding_machine.profiles.coding.tui.app import CodingApp
 from auto_coding_machine.profiles.coding.tui.widgets import Composer, PermissionScreen
 from auto_coding_machine.runtime.factory import build_runtime_components
+from tests.helpers import ready
 
 
 def local_profile():
     return Profile(context_budget=8000, skills=(), load_instructions=False)
-
-
-async def ready(app, pilot):
-    for _ in range(100):
-        await pilot.pause(0.02)
-        if not app.busy:
-            assert app.session is not None
-            return
-    raise AssertionError("会话未完成启动")
 
 
 def test_completion_verification_can_be_explicitly_disabled(tmp_path):
@@ -215,10 +207,7 @@ def test_textual_missing_resume_can_recover_by_opening_new_session(tmp_path):
     async def scenario():
         app = CodingApp(tmp_path, local_profile(), resume="missing-session")
         async with app.run_test(size=(80, 24)) as pilot:
-            for _ in range(100):
-                await pilot.pause(0.02)
-                if not app.busy:
-                    break
+            await ready(app, pilot)
             assert app.blocked and app.session is None
             await app.submit("/new")
             await ready(app, pilot)

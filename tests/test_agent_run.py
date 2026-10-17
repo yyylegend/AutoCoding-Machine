@@ -1,22 +1,18 @@
 """AgentRun 的任务生命周期 seam 测试。"""
 
-from auto_coding_machine.engine import CancellationToken, HookManager, ToolCall, ToolResult
+from auto_coding_machine.engine import (
+    AgentResponse,
+    BudgetPolicy,
+    CancellationToken,
+    GuardManager,
+    HookManager,
+    MachineLoop,
+    ToolCall,
+    ToolResult,
+)
 from auto_coding_machine.engine.session_store import SessionStore
 from auto_coding_machine.runtime.run import AgentRun
-
-
-class FakeLoop:
-    def __init__(self, results):
-        self.results = list(results)
-        self.started_messages = []
-        self.calls = []
-
-    def start_task(self, messages):
-        self.started_messages.append(messages)
-
-    def run(self, messages, cancel, **kwargs):
-        self.calls.append((messages, cancel))
-        return self.results.pop(0)
+from tests.helpers import ScriptedPermission, scripted_model
 
 
 class FakeGate:
@@ -36,25 +32,35 @@ class FakeTools:
         return ToolResult(tool_call.id, "工具执行成功")
 
 
-class FailingSessionStore:
+class ReceiptWriteFailingStore:
+    """助手消息可以写入，工具回执写入失败。"""
+
     def __init__(self):
         self.messages = []
 
     def append(self, message):
         self.messages.append(message)
-        raise OSError("磁盘暂时不可写")
+        if message["role"] == "tool":
+            raise OSError("磁盘暂时不可写")
+
+
+def make_run(model_fn, tools, store, *, hooks=None, gate=None, messages=None, cancel=None):
+    loop = MachineLoop(
+        model_fn=model_fn,
+        tools=tools,
+        permission=ScriptedPermission({"write_file", "run_bash"}),
+        guard=GuardManager(),
+        budget=BudgetPolicy(max_turns=10),
+        final_verifier=lambda _messages, response: response.done,
+        hooks=hooks or HookManager(),
+        session_store=store,
+    )
+    return AgentRun(loop, store, gate, messages or [{"role": "user", "content": "修改 a.py"}], cancel)
 
 
 def test_agent_run_approves_tool_and_resumes_with_same_task_state(tmp_path):
-    messages = [{"role": "user", "content": "修改 a.py"}]
     call = ToolCall(id="call-1", name="write_file", arguments={"path": "a.py"})
-    pending = {
-        "status": "permission_required",
-        "pending_tool_call": call,
-        "messages": messages,
-        "turn": 2,
-    }
-    loop = FakeLoop([pending, {"status": "success", "reply": "完成"}])
+    model = scripted_model(AgentResponse(tool_calls=[call]), AgentResponse(content="完成", done=True))
     gate = FakeGate()
     tools = FakeTools()
     hooks = HookManager()
@@ -62,64 +68,38 @@ def test_agent_run_approves_tool_and_resumes_with_same_task_state(tmp_path):
     seen = []
     hooks.on("post_tool", lambda **event: seen.append(event))
     cancel = CancellationToken()
-    run = AgentRun(loop, tools, hooks, store, gate, messages, cancel)
+    run = make_run(model, tools, store, hooks=hooks, gate=gate, cancel=cancel)
 
     assert run.start()["status"] == "permission_required"
     result = run.resolve_permission(approved=True)
 
     assert result == {"status": "success", "reply": "完成"}
     assert gate.started == 1
-    assert loop.started_messages == [messages]
     assert tools.calls == [call]
-    assert loop.calls[0][1] is cancel
-    assert loop.calls[1][1] is cancel
-    assert messages[-1] == {
-        "role": "tool",
-        "tool_call_id": "call-1",
-        "content": "工具执行成功",
-    }
-    assert store.load() == [messages[-1]]
+    assert run.cancel_token is cancel
+    receipt = {"role": "tool", "tool_call_id": "call-1", "content": "工具执行成功"}
+    assert model.calls[-1][-1] == receipt
+    assert receipt in store.load()
     assert seen[0]["tool_name"] == "write_file"
-    assert seen[0]["turn"] == 2
+    assert seen[0]["turn"] == 0
 
 
 def test_agent_run_stops_with_tool_result_when_session_write_fails():
-    messages = [{"role": "user", "content": "修改 a.py"}]
     call = ToolCall(id="call-1", name="write_file", arguments={"path": "a.py"})
-    pending = {
-        "status": "permission_required",
-        "pending_tool_call": call,
-        "messages": messages,
-        "turn": 2,
-    }
-    loop = FakeLoop([pending, {"status": "success", "reply": "继续完成"}])
+    model = scripted_model(AgentResponse(tool_calls=[call]), AgentResponse(content="继续完成", done=True))
     tools = FakeTools()
-    store = FailingSessionStore()
-    run = AgentRun(
-        loop,
-        tools,
-        HookManager(),
-        store,
-        FakeGate(),
-        messages,
-        CancellationToken(),
-    )
+    store = ReceiptWriteFailingStore()
+    run = make_run(model, tools, store, gate=FakeGate())
 
     run.start()
     result = run.resolve_permission(approved=True)
 
-    assert result["status"] == "failed"
-    assert result["error"] == "session_write_failed"
-    assert result["tool_result"] == {
-        "role": "tool",
-        "tool_call_id": "call-1",
-        "content": "工具执行成功",
-    }
+    receipt = {"role": "tool", "tool_call_id": "call-1", "content": "工具执行成功"}
+    assert result == {"status": "failed", "error": "session_write_failed", "tool_result": receipt}
     assert tools.calls == [call]
-    assert len(loop.calls) == 1  # 写盘失败后不能继续调用模型或执行更多工具。
+    assert len(model.calls) == 1  # 写盘失败后不能继续调用模型或执行更多工具。
     assert run.result is result
-    assert "permission_request" not in result
-    assert store.messages == [messages[-1]]
+    assert store.messages[-1] == receipt
     try:
         run.resolve_permission(approved=True)
     except RuntimeError:
@@ -130,46 +110,23 @@ def test_agent_run_stops_with_tool_result_when_session_write_fails():
 
 
 def test_agent_run_reports_denied_tool_to_model_without_executing_it(tmp_path):
-    messages = [{"role": "user", "content": "删除 a.py"}]
     call = ToolCall(id="call-2", name="run_bash", arguments={"command": "del a.py"})
-    pending = {
-        "status": "permission_required",
-        "pending_tool_call": call,
-        "messages": messages,
-        "turn": 0,
-    }
-    loop = FakeLoop([pending, {"status": "need_input", "reply": "请换一种做法"}])
+    model = scripted_model(AgentResponse(tool_calls=[call]), AgentResponse(content="请换一种做法"))
     tools = FakeTools()
-    run = AgentRun(
-        loop,
-        tools,
-        HookManager(),
-        SessionStore(tmp_path, "run-2"),
-        FakeGate(),
-        messages,
-        CancellationToken(),
-    )
+    run = make_run(model, tools, SessionStore(tmp_path, "run-2"), gate=FakeGate(),
+                   messages=[{"role": "user", "content": "删除 a.py"}])
 
     run.start()
     result = run.resolve_permission(approved=False)
 
     assert result["status"] == "need_input"
     assert tools.calls == []
-    resumed_messages = loop.calls[-1][0]
-    assert resumed_messages[-1]["role"] == "tool"
-    assert resumed_messages[-1]["content"] == "用户拒绝了这次操作"
+    assert model.calls[-1][-1]["role"] == "tool"
+    assert model.calls[-1][-1]["content"] == "用户拒绝了这次操作"
 
 
 def test_agent_run_cancel_marks_its_own_token(tmp_path):
-    run = AgentRun(
-        FakeLoop([]),
-        FakeTools(),
-        HookManager(),
-        SessionStore(tmp_path, "run-3"),
-        FakeGate(),
-        [],
-        None,
-    )
+    run = make_run(scripted_model(), FakeTools(), SessionStore(tmp_path, "run-3"), messages=[])
 
     run.cancel()
 

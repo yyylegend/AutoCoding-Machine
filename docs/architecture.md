@@ -1,6 +1,6 @@
 # Architecture
 
-配套 [交互式架构图](diagrams/README.md) 展示整体结构、[Harness 包结构](diagrams/harness-package-structure.html) 和完成验证流程；细节与限制以本文和代码为准。术语见 [CONTEXT.md](../CONTEXT.md)；公共事件与权限交互的约定见 [ADR 0001](adr/0001-harness-event-contract.md)，实施记录见[近期计划](plans/2026-09-24-harness-public-events.md)。
+配套 [交互式架构图](diagrams/README.md) 展示整体结构、[Harness 包结构](diagrams/harness-package-structure.html) 和完成验证流程；细节与限制以本文和代码为准。术语见 [CONTEXT.md](../CONTEXT.md)；公共事件与权限交互的约定见 [ADR 0001](adr/0001-harness-event-contract.md)，验收记录见[归档计划](archive/2026-09-24-harness-public-events.md)。
 
 本文描述当前代码实现。Python 包名为 `auto_coding_machine`，实现位于标准源码布局 `src/auto_coding_machine/`，本地 editable 安装可供其他项目使用。可复用 Harness 的目标见 [模块化 Harness 计划](plans/2026-09-22-modular-harness.md)；`AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent` 的演进背景见[运行时边界历史记录](archive/2026-09-05-runtime-boundaries.md)。
 
@@ -32,15 +32,16 @@ src/__main__.py      # 兼容旧的 python -m src 命令
 | --- | --- |
 | 当前 Profile 与配置切换 | Textual `CodingApp`；任务空闲时重建会话 |
 | 当前 store、history、压缩视图 | `AgentSession`；Plan Mode 由 `CodingApp` 持有 |
-| 对原始会话的读写 | `SessionStore`；`AgentSession` 追加用户/技能消息，`AgentRun` 与 `MachineLoop` 追加工具/助手消息 |
+| 对原始会话的读写 | `SessionStore`；`AgentSession` 追加用户/技能消息，`MachineLoop` 追加助手消息，`ToolBatch` 追加工具回执 |
 | 消息组装与运行组件引用 | `AgentRuntime`、`RuntimeRegistry` |
 | 单次任务的取消、当前结果与权限恢复 | `AgentRun`；CLI 只收集用户的批准结果 |
-| 执行轮数 | `MachineLoop`；权限暂停恢复时由 `AgentRun` 传回暂停轮次，一次任务的 `max_turns` 预算连续计数，不重新起算 |
+| 一次模型回复内的工具调用、处理位置与等待审批的调用 | `ToolBatch`；暂停期间由 `AgentRun` 保存 |
+| 执行轮数 | `MachineLoop`；恢复时从暂停批次的轮次接着计数，一次任务的 `max_turns` 预算不重新起算 |
 | 文件基线、验证版本、候选回答 | Coding 的 `CompletionGate` |
 | 工具可用范围与资源 | `RuntimeComponents` 中的 `ProfileTools`、`ToolEnvironment`、`ToolManager` |
 | 运行记录 | `RunTrace` 包装模型调用，并订阅 typed `AgentEvent` |
 
-目前已有第一切片的 `AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent`，但它们不替代 `MachineLoop`。`AgentSession` 保留 JSONL 作为原始事实源，管理压缩和清屏后的进程内视图；`AgentRun` 持有一次任务的消息、取消令牌和待确认工具，并在确认后统一触发事件、回填消息、写入 Session 再恢复循环。同一模型回复内的多个工具调用按顺序成批处理：某个调用等待审批时，同批剩余调用随暂停结果保存，恢复后按原顺序继续，已执行的调用不重复执行；用户拒绝只影响当前调用，剩余调用继续各自的权限检查；只有取消会中止批次，未执行调用补明确的「未执行」回执。取消是协作式取消：等待审批期间取消后，随后到达的批准也不执行工具，已发生的副作用不会被撤回。`RequestView` 负责历史召回和临时状态追加；旧的按名称 Hook 仍保留给 CompletionGate 等控制策略。`ToolEnvironment` 仍继承 `WorkspaceSandbox`。
+目前已有第一切片的 `AgentSession`、`AgentRun`、`RequestView` 和 typed `AgentEvent`，但它们不替代 `MachineLoop`。`AgentSession` 保留 JSONL 作为原始事实源，管理压缩和清屏后的进程内视图；`AgentRun` 持有一次任务的消息、取消令牌和暂停的 `ToolBatch`，把用户的权限决定交给 `MachineLoop.resume()`。同一模型回复内的多个工具调用由 `engine/tool_batch.py` 的 `ToolBatch` 按顺序处理，自动放行和用户批准后的执行使用同一套事件、回执和写入失败处理：某个调用等待审批时，同批剩余调用随暂停结果保存，恢复后按原顺序继续，已执行的调用不重复执行；用户拒绝只影响当前调用，剩余调用继续各自的权限检查；只有取消会中止批次，未执行调用补明确的「未执行」回执。取消是协作式取消：等待审批期间取消后，随后到达的批准也不执行工具，已发生的副作用不会被撤回。`RequestView` 负责历史召回和临时状态追加；旧的按名称 Hook 仍保留给 CompletionGate 等控制策略。`ToolEnvironment` 仍继承 `WorkspaceSandbox`。
 
 审批恢复时，未完成的工具批次执行完毕后再进行上下文压缩。最新工具批次超过消息数量或 Token 预算时，调用声明及其回执一起保留，避免产生孤立的工具结果。最后一个工具完成后收到取消请求，任务返回 `cancelled`；回执写入失败仍返回 `session_write_failed`。
 
@@ -76,7 +77,7 @@ Engine 不需要知道 Companion 的人格或 Coding 的提示词。Coding 可�
 
 ## TUI 与配置切换
 
-默认命令行入口启动 `profiles/coding/tui/` 下的 Textual 应用。Profile 切换在任务空闲时重建运行组件、清除旧 Plan Mode 和权限对象，保留原始 JSONL；输入历史按 Profile 的状态目录保存。已有 `run_cli()` 及其 Rich/prompt_toolkit 实现保留兼容调用。
+默认命令行入口启动 `profiles/coding/tui/` 下的 Textual 应用。Profile 切换在任务空闲时重建运行组件、清除旧 Plan Mode 和权限对象，保留原始 JSONL；输入历史按 Profile 的状态目录保存。
 
 切换清单包含内置预设与工作区 `profile_configs/` 下的有效 YAML；`examples/profiles/` 只存教学示例，不参与自动发现。自定义配置通过路径加载，列表名称尚不作为别名解析。
 
@@ -92,7 +93,7 @@ User input
   → RequestView temporarily recalls old-session context and appends AgentStatusBar
   → MachineLoop asks the model
   → Permission and Hook checks
-  → ToolManager executes one tool, or AgentRun resolves a user confirmation
+  → ToolBatch executes each call, or pauses until AgentRun passes back a user decision
   → Tool result returns to the model
   → CompletionGate checks validation evidence (Coding only)
   → Final reply or next tool call
@@ -102,7 +103,7 @@ User input
 
 ### `auto_coding_machine.engine`
 
-与具体入口无关的执行内核：契约、循环、上下文、权限、守卫、Hook、会话和工具注册。
+与具体入口无关的执行内核：契约、循环、工具批次、上下文、权限、守卫、Hook、会话和工具注册。
 
 ### `auto_coding_machine.memory`
 
@@ -145,7 +146,7 @@ Coding 专属系统提示词、完成验证、Plan Mode、沙箱和代码工具�
 | 层 | 载体 | 谁写 | 特点 |
 | --- | --- | --- | --- |
 | 精选记忆 | `MEMORY.md` / `USER.md`（Markdown） | 模型通过 memory 工具 | 有容量上限，跨会话注入；写操作加锁 + 原子替换；权限按动作分级（`add` 自动，`replace`/`remove` 需确认） |
-| 原始会话 | `.autocoding/profiles/<name>/sessions/*.jsonl` | `AgentSession`、`AgentRun` 与 MachineLoop 通过 SessionStore 追加 | 作为恢复对话的依据，不因压缩而改写 |
+| 原始会话 | `.autocoding/profiles/<name>/sessions/*.jsonl` | `AgentSession`、MachineLoop 与 ToolBatch 通过 SessionStore 追加 | 作为恢复对话的依据，不因压缩而改写 |
 | 压缩视图 | 进程内消息列表 | ContextManager 生成，CLI 与循环使用 | 不替换原始会话；发送给模型的视图可出现在独立诊断记录中 |
 
 压缩会丢细节，但丢掉的内容始终躺在 JSONL 里，模型可以用 `recall_history` 跨会话找回
@@ -215,9 +216,9 @@ Profile 版的自动召回与 `recall_history` 使用同一个会话目录；`/r
 
 能力边界：净修改跟踪覆盖 `write_file`、`edit_file` 触碰的路径，不是整个工作区的变更审计；Shell 或外部程序的任意写入没有同等完整的跟踪。验证命令成功只说明对应检查成功，当前不判断测试是否覆盖修改，也不判断所有需求是否满足。此机制不是安全隔离或代码正确性保证。
 
-流式展示两阶段提交：`StreamingAdapter` 依据 `should_publish_stream()` 决定
-正常流式渲染或静默缓冲（token 照收、不建持久面板）；`last_streamed` 只表示
-最终回答已持久展示。用户每个任务最多看到一份持久最终回答。
+流式展示两阶段提交：`TuiModelAdapter` 依据 `should_publish_stream()` 决定
+把 token 增量发给界面，或静默缓冲（token 照收、界面不显示）；静默缓冲时，
+界面在任务结束后只展示 CompletionGate 裁定的最终回答。用户每个任务最多看到一份持久最终回答。
 
 `read_file` 支持 `start_line` / `end_line`（1-based，含端点）分页读取长文件，
 带真实行号和续读建议；长文件不再需要临时脚本。

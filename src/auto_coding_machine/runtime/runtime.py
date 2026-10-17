@@ -49,8 +49,6 @@ class AgentRuntime:
         """创建一次用户任务的 lifecycle module。"""
         return AgentRun(
             loop=self.loop,
-            tools=self.tools,
-            hooks=self.hooks,
             session_store=self.session_store,
             completion_gate=self.completion_gate,
             memory_writer=self.memory_writer,

@@ -322,7 +322,7 @@ class TestGuardManager(unittest.TestCase):
         self.assertFalse(self.guard.should_stop(messages, turn=0))
 
 
-class TestSimpleLLMAdapter(unittest.TestCase):
+class TestModelAdapter(unittest.TestCase):
     """LLM 适配器的完成判定测试。
 
     大白话：
@@ -334,19 +334,10 @@ class TestSimpleLLMAdapter(unittest.TestCase):
     """
 
     def setUp(self):
-        """创建一个干净的 adapter（不需要真正的 tools）。"""
-        from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
-        from rich.console import Console
+        """创建一个干净的非流式 adapter（不需要真正的 tools）。"""
+        from auto_coding_machine.common.model_adapter import ModelAdapter
 
-        # 测试用：给一个安静的 console 和简单的 theme
-        test_console = Console(quiet=True)
-        test_theme = {"dim": "grey50", "ai": "cyan"}
-
-        self.adapter = StreamingAdapter(
-            tools_schemas=[], console=test_console, theme=test_theme,
-        )
-        # 关闭流式：这些用例测的是 done 判断逻辑，不走网络
-        self.adapter.stream = False
+        self.adapter = ModelAdapter([])
 
     # ------------------------------------------------------------------
     # 开始测试
@@ -369,7 +360,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
 
         # 模拟 llm_client.chat() 的返回格式
         # adapter 内部不直接调 LLM，所以我们要 mock 它的 chat 方法
-        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.common.model_adapter as adapter_module
 
         original_chat = adapter_module.chat
         try:
@@ -396,7 +387,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
             ],
         }
 
-        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.common.model_adapter as adapter_module
 
         original_chat = adapter_module.chat
         try:
@@ -419,7 +410,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
             "tool_calls": [],
         }
 
-        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.common.model_adapter as adapter_module
 
         original_chat = adapter_module.chat
         try:
@@ -443,7 +434,7 @@ class TestSimpleLLMAdapter(unittest.TestCase):
             "tool_calls": [],
         }
 
-        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.common.model_adapter as adapter_module
 
         original_chat = adapter_module.chat
         try:
@@ -457,11 +448,15 @@ class TestSimpleLLMAdapter(unittest.TestCase):
 
 
     def test_streaming_done_and_metrics(self):
-        """流式路径：done 判断 + TTFT/token 指标累积 + last_streamed 标记。
+        """Textual 流式路径：done 判断 + TTFT/token 指标累积 + 增量转发给界面。
 
         模拟 chat_stream 边回调 token 边返回 usage/ttft，验证适配器正确解析。
         """
-        import auto_coding_machine.profiles.coding.llm_adapter as adapter_module
+        import auto_coding_machine.profiles.coding.tui.model as adapter_module
+        from auto_coding_machine.profiles.coding.tui.model import TuiModelAdapter
+
+        emitted = []
+        adapter = TuiModelAdapter([], lambda kind, value: emitted.append((kind, value)), session_id="s1")
 
         def fake_stream(messages, tools=None, on_token=None, **kw):
             # 模拟流式输出两个 content 增量
@@ -478,20 +473,19 @@ class TestSimpleLLMAdapter(unittest.TestCase):
         original = adapter_module.chat_stream
         try:
             adapter_module.chat_stream = fake_stream
-            self.adapter.stream = True
-            self.adapter.reset_metrics()
 
-            response = self.adapter.call([])
+            response = adapter.call([])
 
             self.assertTrue(response.done)
             self.assertIn("任务完成", response.content)
-            self.assertTrue(self.adapter.last_streamed)
-            self.assertEqual(self.adapter.total_prompt_tokens, 100)
-            self.assertEqual(self.adapter.total_completion_tokens, 20)
-            self.assertAlmostEqual(self.adapter.last_ttft_ms, 123.0)
+            self.assertEqual(emitted, [
+                ("start", True), ("chunk", "任务完成，"), ("chunk", "测试全部通过。"), ("end", None),
+            ])
+            self.assertEqual(adapter.prompt_tokens, 100)
+            self.assertEqual(adapter.completion_tokens, 20)
+            self.assertAlmostEqual(adapter.last_ttft_ms, 123.0)
         finally:
             adapter_module.chat_stream = original
-            self.adapter.stream = False
 
 
 if __name__ == "__main__":

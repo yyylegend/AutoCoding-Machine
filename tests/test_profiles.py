@@ -196,24 +196,33 @@ def test_invalid_config_fails_before_runtime(tmp_path, config):
 
 @pytest.mark.parametrize("profile_name", ["review", "companion"])
 def test_cli_selects_profile_and_runs_without_real_model(tmp_path, monkeypatch, profile_name):
-    """真正走 CLI 组装与循环，只替换输入和网络，验证命令行参数贯通。"""
-    from auto_coding_machine.profiles.coding import cli, llm_adapter
+    """真正走 Textual CLI 组装与循环，只替换网络，验证 Profile 参数贯通。"""
+    import asyncio
+    from auto_coding_machine.profiles.coding.tui import model as tui_model
+    from auto_coding_machine.profiles.coding.tui.app import CodingApp
     from auto_coding_machine.runtime import factory
+    from tests.helpers import ready
 
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(factory, "profile_token_budget", lambda _, **kwargs: 10000)
     monkeypatch.setattr(factory, "resolve_context_info", lambda _: {"window": None, "source": "未知"})
-    monkeypatch.setattr(cli, "create_main_session", lambda *args, **kwargs: None)
-    inputs = iter(["你好", "/memory", "/quit"])
-    monkeypatch.setattr(cli, "main_input", lambda *args: next(inputs))
     requests = []
 
     def respond(messages, **kwargs):
         requests.append((messages, kwargs))
         return {"content": "你好呀", "tool_calls": [], "usage": {}}
 
-    monkeypatch.setattr(llm_adapter, "chat_stream", respond)
-    cli.run_cli(profile=profile_name)
+    monkeypatch.setattr(tui_model, "chat_stream", respond)
+
+    async def scenario():
+        app = CodingApp(tmp_path, profile_name)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await ready(app, pilot)
+            await app.submit("你好")
+            await ready(app, pilot)
+            await app.submit("/memory")
+            await pilot.pause()
+
+    asyncio.run(scenario())
     assert len(requests) == 1
     schemas = requests[0][1]["tools"]
     assert "write_file" not in {item["function"]["name"] for item in schemas}

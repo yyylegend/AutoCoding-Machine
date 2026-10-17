@@ -2,7 +2,6 @@ import pytest
 
 from examples.order_assistant import SAVED_DRAFTS, build_session
 from auto_coding_machine import AgentResponse, ToolCall
-from auto_coding_machine.engine import CancellationToken
 from auto_coding_machine.engine.context_manager import ContextManager
 
 
@@ -29,45 +28,58 @@ def test_cancellation_after_last_tool_takes_precedence_over_turn_limit(tmp_path,
     assert "failed" not in events
 
 
-def test_cancellation_after_remaining_batch_tool_is_reported(tmp_path):
-    events = []
-    session = build_session(tmp_path, on_event=lambda event: events.append(event.name))
-    loop = session.runtime.loop
-    loop.budget.max_turns = 1
-    cancel = CancellationToken()
-    call = ToolCall("q-1", "query_order", {"order_id": "A1001"})
-    messages = [AgentResponse(tool_calls=[call]).to_message()]
-    session.runtime.hooks.on("post_tool", lambda **event: cancel.cancel())
+def _draft(call_id):
+    return ToolCall(call_id, "save_reply_draft", {"order_id": "A1001", "content": "草稿"})
 
-    result = loop.run(messages, cancel, resume_batch=[call])
+
+def _query(call_id, order_id="A1001"):
+    return ToolCall(call_id, "query_order", {"order_id": order_id})
+
+
+def test_cancellation_after_remaining_batch_tool_is_reported(tmp_path):
+    SAVED_DRAFTS.clear()
+    events = []
+    calls = [_draft("d-1"), _query("q-1")]
+    session = build_session(
+        tmp_path, model_fn=lambda _messages: AgentResponse(tool_calls=calls),
+        on_event=lambda event: events.append(event.name),
+    )
+    session.runtime.loop.budget.max_turns = 1
+    run = session.begin_run("保存草稿并查询订单")
+
+    def cancel_after_query(**event):
+        if event["tool_name"] == "query_order":
+            run.cancel()
+
+    session.runtime.hooks.on("post_tool", cancel_after_query)
+    assert run.start()["status"] == "permission_required"
+    result = run.resolve_permission(approved=True)
 
     assert result["status"] == "cancelled"
     assert events[-1] == "cancelled"
-    assert messages[-1]["tool_call_id"] == "q-1"
+    assert session.store.load()[-1]["tool_call_id"] == "q-1"
 
 
 def test_remaining_batch_executes_before_context_compaction(tmp_path):
-    session = build_session(tmp_path)
+    SAVED_DRAFTS.clear()
+    calls = [_query("q-0"), _query("q-1", "A1002"), _draft("d-1"), _query("q-3", "A1002")]
+    session = build_session(tmp_path, model_fn=lambda _messages: AgentResponse(tool_calls=calls))
     loop = session.runtime.loop
     loop.budget.max_turns = 1
     loop.context_manager = ContextManager(max_messages=3)
-    calls = [ToolCall(f"q-{i}", "query_order", {"order_id": order_id})
-             for i, order_id in enumerate(("A1001", "A1002", "A1001", "A1002"))]
-    messages = [
-        {"role": "user", "content": "查询订单"},
-        AgentResponse(tool_calls=calls).to_message(),
-        *[session.runtime.tools.execute(call).to_message() for call in calls[:3]],
-    ]
-    modes = []
-    session.runtime.hooks.on(
-        "pre_tool", lambda **event: modes.append(loop.context_manager.last_compaction_mode),
-    )
+    compactions = []
+    session.runtime.hooks.on("compacted", lambda **event: compactions.append(event))
+    run = session.begin_run("查询订单")
 
-    result = loop.run(messages, CancellationToken(), resume_batch=calls[3:])
+    assert run.start()["status"] == "permission_required"
+    before = len(compactions)
+    result = run.resolve_permission(approved=True)
 
+    # 暂停前已有的回执超过消息上限，恢复后剩余调用仍先于压缩完成。
     assert result["error"] == "max_turns"
-    assert modes == ["none"]
-    assert [m["tool_call_id"] for m in messages[2:]] == ["q-0", "q-1", "q-2", "q-3"]
+    assert len(compactions) == before
+    receipts = [m["tool_call_id"] for m in session.store.load() if m["role"] == "tool"]
+    assert receipts == ["q-0", "q-1", "d-1", "q-3"]
 
 
 def test_receipt_write_failure_is_not_hidden_by_cancellation(tmp_path):

@@ -32,7 +32,6 @@ class RuntimeRegistry:
         self.tools = tools
         self.hooks = hooks
         self._injections: list[tuple[str, Callable]] = []
-        self._commands: dict[str, dict] = {}
 
     def register_tool(self, module) -> None:
         """注册一个现有工具模块。"""
@@ -69,12 +68,6 @@ class RuntimeRegistry:
         """返回注册顺序，便于状态显示和测试。"""
         return [name for name, _provider in self._injections]
 
-    def register_command(self, name: str, description: str, handler: Callable) -> None:
-        """预留斜杠命令插孔，第一轮只保存注册信息。"""
-        if name in self._commands:
-            raise ValueError(f"Runtime command 已注册: {name}")
-        self._commands[name] = {"description": description, "handler": handler}
-
     def use(self, extension) -> None:
         """启用一个内置扩展。"""
         register = getattr(extension, "register", None)
@@ -101,19 +94,3 @@ class RuntimeRegistry:
             else:
                 result.append(value)
         return result
-
-    def get_command(self, name: str):
-        """按名称查找命令；找不到时返回 None。"""
-        return self._commands.get(name)
-
-    def run_command(self, name: str, context) -> bool:
-        """运行一个已注册命令，返回是否找到。"""
-        command = self.get_command(name)
-        if command is None:
-            return False
-        command["handler"](context)
-        return True
-
-    def get_commands(self) -> dict[str, dict]:
-        """返回命令注册信息，供帮助显示和测试使用。"""
-        return dict(self._commands)

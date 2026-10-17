@@ -9,6 +9,7 @@ Coding / Browser 等具体能力在 src/auto_coding_machine/profiles/ 里。
 已实现：
   contracts.py          — ToolCall / ToolResult / AgentResponse 等契约
   machine_loop.py       — 核心 while-loop（model_fn 构造注入）
+  tool_batch.py         — 一次模型回复内的工具调用批次：检查、执行、审批暂停与回执
   hook_manager.py       — 生命周期钩子管理器与 typed event 分发
   events.py             — AgentEvent 执行事件契约
   request_view.py       — 临时模型请求视图

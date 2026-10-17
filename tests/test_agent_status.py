@@ -120,8 +120,6 @@ def test_status_records_denied_permission_resolved_by_agent_run(tmp_path):
     )
     run = AgentRun(
         loop,
-        Tools(),
-        loop.hooks,
         SessionStore(sessions_dir_for(tmp_path), "status-denied"),
         None,
         [{"role": "user", "content": "删除 a.py"}],

@@ -15,7 +15,7 @@ class ModelAdapter:
       4. 打包成 AgentResponse 返回给 MachineLoop
 
     用法：
-      adapter = BaseCodingAdapter(tools_schemas)
+      adapter = ModelAdapter(tools_schemas)
       response = adapter.call(messages)
     """
 
@@ -27,10 +27,6 @@ class ModelAdapter:
           on_token      - 可选的流式回调，签名 on_token(piece: str)。
                           传了就走流式（chat_stream），每个 token 增量回调一次；
                           不传（默认 None）走非流式（chat），和原来一样。
-
-        为什么加这个参数：
-          原来只有 CLI 的 StreamingAdapter 能流式，而且流式只渲染到终端。
-          调用方也可能需要纯流式回调，因此基类保留无 UI 的流式入口。
         """
         self.tools_schemas = tools_schemas
         # 外部注入的 token 回调。None = 非流式。

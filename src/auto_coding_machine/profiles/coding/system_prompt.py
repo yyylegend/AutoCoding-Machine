@@ -20,7 +20,7 @@
 
 【关键设计】
   完成判定不靠文字标记：模型这一轮不再调用工具、直接给出回复，
-  就视为本轮收尾（判定逻辑在 llm_adapter._parse_result）。
+  就视为本轮收尾（判定逻辑在 ModelAdapter._parse_result）。
   所以 prompt 只需引导“做完再汇报”，不强制固定开头。
 """
 

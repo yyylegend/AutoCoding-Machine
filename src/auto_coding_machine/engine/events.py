@@ -8,7 +8,7 @@ _MAX_PUBLIC_VALUE_LENGTH = 200
 _REDACTED = "[REDACTED]"
 _HIDDEN_LONG_VALUE = "[HIDDEN: value exceeds 200 characters]"
 _PRIVATE_EVENT_FIELDS = {
-    "messages", "pending_tool_call", "reply", "result_content",
+    "messages", "reply", "result_content",
     "result_metadata",
 }
 _INLINE_SECRET_PATTERNS = (

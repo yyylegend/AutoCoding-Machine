@@ -1,56 +1,17 @@
-"""CLI 输入增强：prompt_toolkit 封装。
+"""Textual 输入框的斜杠命令参数补全与 Profile 清单。
 
-【这文件是干什么的】
-  把原生 input() 替换成 prompt_toolkit，获得这些能力：
-    1. 上下键翻历史（跨会话保留，存在当前 Profile 的 input_history）
-    2. 斜杠命令菜单：输入 / 自动弹出命令选择菜单（右边带说明列）
-    3. 命令参数补全：/skill 后补技能名、/resume 后补会话 id
-    4. 多行编辑（Alt+Enter 换行，Enter 发送）
-
-【设计原则】
-  - 只封装输入，不管输出（输出仍用 rich console）
-  - 确认类输入（/compact、ASK 权限）用简单 prompt，不带补全
-  - 历史文件独立于 session JSONL，不污染对话历史
-
-【谁会用】
-  - cli.py 主输入
-  - cli_ui.py 的 ask_permission_confirm
+命令名本身的菜单由 tui/app.py 的 COMMANDS 提供；这里只补命令后面的参数：
+  - /profile <片段> 补 Profile 名称或 YAML 路径
+  - /resume <片段>  补会话 id
+  - /skill <片段>   补技能名
 """
 
 import time
 from pathlib import Path
 
-from prompt_toolkit import PromptSession, prompt
-from prompt_toolkit.application import get_app
 from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.styles import Style
-from prompt_toolkit.utils import get_cwidth
 from auto_coding_machine.profiles.config import BUILTINS, load_profile
 
-
-# =====================================
-# 命令清单（补全菜单用：命令 + 一句话说明）
-# =====================================
-
-# 带参数的命令结尾留一个空格：选中后光标落在参数区，立刻进入参数补全
-_COMMANDS_WITH_HELP = [
-    ("/profile ", "切换配置（不带参数查看清单）"),
-    ("/plan", "进入 Plan Mode（只读，产出结构化计划）"),
-    ("/help", "显示帮助"),
-    ("/status", "当前状态（模式/模型/会话/token/上下文占比）"),
-    ("/cost", "本次会话 token 消耗"),
-    ("/memory", "查看长期记忆（MEMORY.md + USER.md）"),
-    ("/clear", "清屏 + 重置对话（JSONL 保留）"),
-    ("/compact", "手动压缩上下文（带确认）"),
-    ("/skills", "列出可用技能"),
-    ("/skill ", "把指定技能注入对话（后接技能名，可补全）"),
-    ("/sessions", "列出历史会话"),
-    ("/resume ", "切换到指定会话（后接会话 id，可补全）"),
-    ("/prompt", "查看当前发给 LLM 的消息结构"),
-    ("/quit", "退出（/exit 同义）"),
-]
 
 # 会话清单缓存时长（秒）。
 # 补全每敲一键都会触发查询，list_sessions 要扫目录读文件，
@@ -59,13 +20,13 @@ _SESSIONS_CACHE_TTL = 3.0
 
 
 class SlashCompleter(Completer):
-    """斜杠命令补全器：三段式。
+    """斜杠命令参数补全器。
 
-    1. 输入 / 且还没空格 -> 弹出命令菜单（右边显示一句话说明）
-    2. /skill <片段>     -> 补技能名（右边显示技能描述）
-    3. /resume <片段>    -> 补会话 id（右边显示会话标题）
+    1. /profile <片段> -> 补 Profile（右边显示配置名称）
+    2. /skill <片段>   -> 补技能名（右边显示技能描述）
+    3. /resume <片段>  -> 补会话 id（右边显示会话标题）
 
-    其它情况（普通聊天文字）不提供补全，菜单不会弹出来。
+    其它情况不提供补全。
     """
 
     def __init__(self, skills: list, get_sessions, profiles=None):
@@ -76,6 +37,7 @@ class SlashCompleter(Completer):
                          （启动时扫描一次，之后不变）
           get_sessions - 返回会话清单的函数 [{"id", "title", "mtime"}, ...]
                          （会话会变，每次现查，内部带 TTL 缓存）
+          profiles     - profile_choices() 返回的清单
         """
         self.skills = skills
         self.profiles = profiles or []
@@ -127,38 +89,7 @@ class SlashCompleter(Completer):
                         start_position=-len(fragment),
                         display_meta=(s.get("description") or "")[:40],
                     )
-            return
 
-        # ---- 命令本身：输入 / 开头且还没空格 -> 弹命令菜单 ----
-        if text.startswith("/") and " " not in text:
-            for cmd, desc in _COMMANDS_WITH_HELP:
-                if cmd.startswith(text):
-                    yield Completion(
-                        cmd,
-                        start_position=-len(text),
-                        display_meta=desc,
-                    )
-
-
-# =====================================
-# 多行编辑按键绑定
-# =====================================
-
-def _make_bindings() -> KeyBindings:
-    """Meta+Enter（Alt+Enter）插入换行，Enter 发送。"""
-    bindings = KeyBindings()
-
-    @bindings.add("escape", "enter")
-    def _(event):
-        """Alt+Enter：插入换行继续写。"""
-        event.current_buffer.insert_text("\n")
-
-    return bindings
-
-
-# =====================================
-# 主输入（带历史 + 命令菜单 + 参数补全 + 多行）
-# =====================================
 
 def profile_choices(workspace):
     """清单与补全共用；只扫描约定目录，坏配置不阻断输入。"""
@@ -171,125 +102,3 @@ def profile_choices(workspace):
             continue
         choices.append({"value": path.relative_to(workspace).as_posix(), "name": profile.name})
     return choices
-
-
-def _fit_text(text, width):
-    text = str(text).replace("\n", " ").replace("\r", " ")
-    if width <= 0:
-        return ""
-    if get_cwidth(text) <= width:
-        return text
-    result = []
-    cells = 0
-    for character in text:
-        cells += get_cwidth(character)
-        if cells > width - 1:
-            break
-        result.append(character)
-    return "".join(result) + "…"
-
-
-def status_fragments(status, *, width=80):
-    """使用纯文本片段而非 HTML 插值，模型名中的特殊字符不会破坏显示。"""
-    budget = status.get("budget", 0)
-    pct = int(status.get("tokens", 0) / budget * 100) if budget else None
-    pressure = f"{pct}%" if pct is not None else "未知"
-    pressure = f" · 输入预算 {pressure}" if width >= 60 else f" · {pressure}"
-    mode = "PLAN " if status.get("plan_mode") else ""
-    hints = "  / 命令 · Alt+Enter 换行" if width >= 100 else "  / 命令" if width >= 60 else ""
-    reserved = get_cwidth(mode + pressure + hints)
-    profile = _fit_text(status.get("profile", "coding"), max(1, width - reserved - 2))
-    fragments = [("class:status.profile", f" {profile} "), ("class:status.plan", mode)]
-    model_room = width - get_cwidth(f" {profile} " + mode + pressure + hints)
-    if model_room >= 8:
-        model = _fit_text(status.get("model") or "未设置模型", model_room - 3)
-        fragments.append(("class:status", " · " + model))
-    pressure_style = "class:status.warning" if pct is not None and pct >= 80 else "class:status"
-    fragments.extend([(pressure_style, pressure), ("class:status", hints)])
-    return fragments
-
-
-def create_main_session(workspace: Path, skills: list = None, get_sessions=None, *,
-                        state_dir=None, profiles=None, get_status=None) -> PromptSession:
-    """创建主输入的 PromptSession（整个 CLI 生命周期共用一个）。
-
-    参数：
-      workspace    - 项目根目录（历史文件放在传入的 Profile 状态目录下）
-      skills       - 技能清单（/skill 补全用；不传就只补命令）
-      get_sessions - 返回会话清单的函数（/resume 补全用；不传则该项不补全）
-
-    返回：
-      PromptSession 实例
-
-    说明：
-      complete_while_typing=True：输入 / 就自动弹出命令选择菜单，
-      不用先按 Tab（Tab 手动触发补全也仍然可用）。
-    """
-    # 历史文件：.autocoding/profiles/<profile>/input_history
-    history_dir = state_dir if state_dir is not None else workspace / ".autocoding"
-    history_dir.mkdir(parents=True, exist_ok=True)
-    history_path = history_dir / "input_history"
-
-    completer = SlashCompleter(skills or [], get_sessions or (lambda: []), profiles)
-
-    return PromptSession(
-        history=FileHistory(str(history_path)),
-        completer=completer,
-        key_bindings=_make_bindings(),
-        multiline=False,             # 默认单行，Alt+Enter 手动换行
-        complete_while_typing=True,  # 输入 / 自动弹命令菜单
-        bottom_toolbar=(lambda: status_fragments(
-            get_status(), width=get_app().output.get_size().columns,
-        )) if get_status else None,
-        style=Style.from_dict({
-            "bottom-toolbar": "noreverse",
-            "status": "#888888 noreverse",
-            "status.profile": "#d4a574 bold noreverse",
-            "status.plan": "ansiyellow bold noreverse",
-            "status.warning": "ansiyellow noreverse",
-            "prompt": "#d4a574 bold",
-            "prompt.mode": "ansiyellow bold",
-            "completion-menu.completion": "bg:#262626 #d4d4d4",
-            "completion-menu.completion.current": "bg:#45403a #ffdab3 bold",
-            "completion-menu.meta.completion": "bg:#262626 #aaaaaa",
-            "completion-menu.meta.completion.current": "bg:#45403a #ffdab3",
-        }),
-    )
-
-
-def main_input(session: PromptSession, plan_mode: bool = False) -> str:
-    """主输入：带历史 + 命令菜单 + 参数补全 + Alt+Enter 多行 + 彩色提示符。
-
-    参数：
-      session   - create_main_session() 返回的实例
-      plan_mode - Plan Mode 标志。True 时提示符加黄色 PLAN 徽章
-
-    返回：
-      用户输入的字符串
-
-    异常：
-      KeyboardInterrupt - 用户按了 Ctrl+C
-      EOFError - 用户按了 Ctrl+D
-    """
-    styled = [("class:prompt.mode", "PLAN ")] if plan_mode else []
-    styled.append(("class:prompt", "❯ "))
-    return session.prompt(styled)
-
-
-# =====================================
-# 确认输入（简单 prompt，无补全）
-# =====================================
-
-def confirm_input(prompt_text: str) -> str:
-    """确认类输入：/compact 确认、ASK 权限确认。
-
-    不带补全、不带历史（确认操作不需要翻历史）。
-    比主输入轻量，直接用 prompt() 一次性函数。
-
-    参数：
-      prompt_text - 提示符
-
-    返回：
-      用户输入的字符串（通常很短：""、"y"、"n"）
-    """
-    return prompt(prompt_text)

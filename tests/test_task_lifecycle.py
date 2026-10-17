@@ -9,11 +9,11 @@ from auto_coding_machine.engine import (
     GuardManager,
     HookManager,
     MachineLoop,
-    PermissionDecision,
     ToolCall,
     ToolResult,
 )
 from auto_coding_machine.runtime.run import AgentRun
+from tests.helpers import ScriptedPermission, scripted_model
 
 
 class RecordingTools:
@@ -25,30 +25,6 @@ class RecordingTools:
     def execute(self, tool_call):
         self.executed.append(tool_call.id)
         return ToolResult(tool_call.id, f"{tool_call.id} 的结果")
-
-
-class ScriptedPermission:
-    """按工具名返回固定权限决定，模拟写操作需要确认。"""
-
-    def __init__(self, ask_names=()):
-        self.ask_names = set(ask_names)
-
-    def check(self, tool_call):
-        if tool_call.name in self.ask_names:
-            return PermissionDecision.ASK
-        return PermissionDecision.AUTO
-
-
-def scripted_model(*responses):
-    """按顺序返回脚本化回复，并记录每次模型调用收到的完整历史。"""
-    remaining = list(responses)
-
-    def model_fn(messages):
-        model_fn.calls.append(list(messages))
-        return remaining.pop(0)
-
-    model_fn.calls = []
-    return model_fn
 
 
 def make_run(model_fn, tools, permission, *, max_turns=10, hooks=None, messages=None):
@@ -64,14 +40,7 @@ def make_run(model_fn, tools, permission, *, max_turns=10, hooks=None, messages=
     )
     if messages is None:
         messages = [{"role": "user", "content": "处理任务"}]
-    return AgentRun(
-        loop,
-        tools,
-        hooks,
-        None,
-        None,
-        messages,
-    )
+    return AgentRun(loop, None, None, messages)
 
 
 def tool_receipts(model_fn, call_index=1):
@@ -147,7 +116,7 @@ def test_approval_arriving_after_cancel_does_not_execute_tool():
     tools = RecordingTools()
     hooks = HookManager()
     events = []
-    hooks.on_event(lambda event: events.append(event.name))
+    hooks.on_event(events.append)
     model = scripted_model(
         AgentResponse(tool_calls=[ToolCall(id="t2", name="confirm_write", arguments={})]),
         AgentResponse(content="完成", done=True),
@@ -161,10 +130,10 @@ def test_approval_arriving_after_cancel_does_not_execute_tool():
     assert result["status"] == "cancelled"
     assert tools.executed == []
     # 事件顺序一致：决定已上报，工具标记未执行，任务以取消结束。
-    assert events[-3:] == ["permission_resolved", "post_tool", "cancelled"]
-    receipts = [m for m in run._messages if m.get("role") == "tool"]
-    assert receipts[-1]["tool_call_id"] == "t2"
-    assert "未执行" in receipts[-1]["content"]
+    assert [event.name for event in events[-3:]] == ["permission_resolved", "post_tool", "cancelled"]
+    receipt = events[-2].data
+    assert receipt["tool_call_id"] == "t2"
+    assert "未执行" in receipt["result_content"]
 
 
 def test_cancel_after_pause_accounts_for_rest_of_batch():
@@ -179,7 +148,10 @@ def test_cancel_after_pause_accounts_for_rest_of_batch():
         ),
         AgentResponse(content="完成", done=True),
     )
-    run = make_run(model, tools, ScriptedPermission({"confirm_write"}))
+    hooks = HookManager()
+    receipts = []
+    hooks.on("post_tool", lambda **event: receipts.append(event))
+    run = make_run(model, tools, ScriptedPermission({"confirm_write"}), hooks=hooks)
 
     assert run.start()["status"] == "permission_required"
     run.cancel()
@@ -187,9 +159,8 @@ def test_cancel_after_pause_accounts_for_rest_of_batch():
 
     assert result["status"] == "cancelled"
     assert tools.executed == []
-    receipts = [m for m in run._messages if m.get("role") == "tool"]
-    assert [m["tool_call_id"] for m in receipts] == ["t2", "t3"]
-    assert all("未执行" in m["content"] for m in receipts)
+    assert [event["tool_call_id"] for event in receipts] == ["t2", "t3"]
+    assert all("未执行" in event["result_content"] for event in receipts)
 
 
 def test_consumed_permission_decision_cannot_run_tool_twice():

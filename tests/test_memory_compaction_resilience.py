@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 import requests
-from rich.console import Console
 
 from auto_coding_machine.common import llm_client
 from auto_coding_machine.common.llm_client import ContextLengthExceededError
@@ -38,8 +37,8 @@ from auto_coding_machine.engine.machine_loop import MachineLoop
 from auto_coding_machine.memory.manager import MemoryManager
 from auto_coding_machine.engine.permission_manager import PermissionManager
 from auto_coding_machine.engine.session_store import SessionStore, sessions_dir_for
-from auto_coding_machine.profiles.coding import llm_adapter as adapter_module
-from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
+from auto_coding_machine.profiles.coding.tui import model as tui_model
+from auto_coding_machine.profiles.coding.tui.model import TuiModelAdapter
 from auto_coding_machine.profiles.coding.tools import CodingTools
 
 
@@ -554,18 +553,18 @@ class TestContextLengthDetection:
 
     def test_streaming_adapter_propagates_context_overflow(self, monkeypatch):
         """流式超限必须直接交给 MachineLoop，不能拿原消息做非流式重发。"""
-        adapter = StreamingAdapter([], Console(), {})
+        adapter = TuiModelAdapter([], lambda _kind, _value: None, session_id="overflow")
         plain_calls = []
 
-        def _overflow(_messages, _buffer, **_kwargs):
+        def _overflow(*_args, **_kwargs):
             raise ContextLengthExceededError("模拟流式超限")
 
         def _plain_call(*args, **kwargs):
             plain_calls.append(1)
             return {"content": "不应调用", "tool_calls": [], "usage": {}}
 
-        monkeypatch.setattr(adapter, "_call_streaming", _overflow)
-        monkeypatch.setattr(adapter_module, "chat", _plain_call)
+        monkeypatch.setattr(tui_model, "chat_stream", _overflow)
+        monkeypatch.setattr("auto_coding_machine.common.model_adapter.chat", _plain_call)
 
         with pytest.raises(ContextLengthExceededError):
             adapter.call([{"role": "user", "content": "hi"}])

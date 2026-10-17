@@ -103,58 +103,60 @@ def test_window_refresh_does_not_reuse_old_model_settings(monkeypatch):
     assert context.resolve_token_budget() == 25600
 
 
-def test_missing_usage_is_not_reported_as_zero():
-    from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
+def _usage_adapter(monkeypatch, usages):
+    """返回 Textual 模型 adapter；每次调用依次报告给定的 usage。"""
+    from auto_coding_machine.profiles.coding.tui import model as tui_model
+    from auto_coding_machine.profiles.coding.tui.model import TuiModelAdapter
 
-    adapter = StreamingAdapter([], Mock(), {})
-    adapter._update_metrics({"usage": {"prompt_tokens": 12, "completion_tokens": 8}})
+    remaining = list(usages)
+    monkeypatch.setattr(tui_model, "chat_stream", lambda *args, **kwargs: {
+        "content": "完成", "tool_calls": [], "usage": remaining.pop(0),
+    })
+    adapter = TuiModelAdapter([], lambda _kind, _value: None, session_id="usage")
+    return adapter
+
+
+def test_missing_usage_is_not_reported_as_zero(monkeypatch):
+    adapter = _usage_adapter(monkeypatch, [
+        {"prompt_tokens": 12, "completion_tokens": 8}, {}, {"prompt_tokens": 0, "completion_tokens": 0},
+    ])
+    adapter.call([])
     assert adapter.last_prompt_tokens == 12
-    adapter._update_metrics({"usage": {}})
+    adapter.call([])
     assert adapter.last_prompt_tokens is None
     assert not adapter.usage_complete
-    assert adapter.total_prompt_tokens == 12
+    assert adapter.prompt_tokens == 12
     adapter.reset_metrics()
-    adapter._update_metrics({"usage": {"prompt_tokens": 0, "completion_tokens": 0}})
+    adapter.call([])
     assert adapter.last_prompt_tokens == 0
     assert adapter.usage_complete
 
 
-def test_missing_usage_is_visible_in_cost():
-    from auto_coding_machine.profiles.coding.commands.cost import handle_cost
-    from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
+def test_cost_and_status_report_missing_usage_and_window_source(tmp_path, monkeypatch):
+    import asyncio
+    from auto_coding_machine.profiles.config import Profile
+    from auto_coding_machine.profiles.coding.tui.app import CodingApp
+    from auto_coding_machine.runtime import factory
+    from tests.helpers import ready
 
-    console = Mock()
-    adapter = StreamingAdapter([], console, {})
-    adapter._update_metrics({})
-    handle_cost({"console": console, "theme": {"dim": "dim"}, "llm": adapter})
-    output = str(console.print.call_args_list)
-    assert "本次任务" in output
-    assert "总消耗未知" in output
+    monkeypatch.setattr(factory, "resolve_context_info", lambda _model: {"window": 1000000, "source": "手动配置"})
+    profile = Profile(skills=(), load_instructions=False)
 
+    async def scenario():
+        app = CodingApp(tmp_path, profile)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await ready(app, pilot)
+            app.model.usage_complete = False
+            app.model.last_prompt_tokens = 16
+            await app.submit("/cost")
+            await app.submit("/status")
+            await pilot.pause()
+            return [str(widget.content) for widget in app.query(".notice")]
 
-def test_status_distinguishes_window_source_and_last_request():
-    from io import StringIO
-    from types import SimpleNamespace
-    from rich.console import Console
-    from auto_coding_machine.profiles.coding.commands.status import handle_status
-    from auto_coding_machine.profiles.coding.llm_adapter import StreamingAdapter
-
-    output = StringIO()
-    console = Console(file=output, width=160, color_system=None)
-    adapter = StreamingAdapter([], console, {}, model="unknown-model")
-    adapter._update_metrics({"usage": {"prompt_tokens": 16, "completion_tokens": 4}})
-    handle_status({
-        "messages": [{"role": "user", "content": "hello"}], "token_budget": 800000,
-        "console": console, "theme": {"dim": "dim"}, "llm": adapter,
-        "store": SimpleNamespace(session_id="test"), "history": [],
-        "tools": SimpleNamespace(get_schemas=lambda: []), "plan_mode": False,
-        "context_info": {"window": 1000000, "source": "手动配置"},
-    })
-    text = output.getvalue()
-    assert "1,000,000（手动配置）" in text
-    assert "通用回退" in text
-    assert "上次请求输入" in text and "16" in text
-    assert "当前输入估算" in text
+    cost, status = asyncio.run(scenario())[-2:]
+    assert "本次任务" in cost and "服务端用量报告不完整" in cost
+    assert "1000000" in status and "手动配置" in status
+    assert "上次服务端输入：16" in status
 
 
 def test_llama_props_failure_does_not_use_training_window(monkeypatch):
